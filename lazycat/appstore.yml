@@ -1,0 +1,46 @@
+source: https://github.com/briefercloud/briefer
+source_author: briefercloud
+is_original: false
+keywords: notebook,dashboard,bi,analytics,jupyter,postgres,sql,python,visualization,self-hosted
+
+support_pc: true
+support_mobile: false
+
+screenshots:
+  pc:
+    - lazycat/screenshots/01-overview.png
+    - lazycat/screenshots/02-notebook.png
+  mobile: []
+
+description:
+  zh-CN: |
+    自托管 Briefer —— 把数据笔记本和仪表盘合二为一。
+
+    特性
+    - 类 Notion 的富文本 + 可执行 Python / SQL 笔记本
+    - 笔记本结果直接拼成仪表盘并分享
+    - 多种数据源开箱即用：PostgreSQL / MySQL / BigQuery / Athena /
+      Redshift / Databricks / Oracle / CSV …
+    - 内置 Jupyter Server 跑 Python 代码（沙箱化）
+    - 内置 Postgres + pgvector，无需另外搭数据库
+    - 可选 AI 助手：SQL 自动补全、对数据自然语言问答（需要 OpenAI Key）
+    - 多用户、工作区、权限管理
+
+    上游项目: https://github.com/briefercloud/briefer
+    本仓库（懒猫包装）: https://github.com/microlazy-apps/lazy-briefer
+  en: |
+    Self-hosted Briefer — data notebooks + dashboards in one app.
+
+    Features
+    - Notion-style rich text + executable Python / SQL cells
+    - Build dashboards directly from notebook outputs and share
+    - Out-of-the-box data sources: PostgreSQL / MySQL / BigQuery /
+      Athena / Redshift / Databricks / Oracle / CSV / ...
+    - Bundled Jupyter Server for sandboxed Python execution
+    - Bundled Postgres + pgvector, no external DB required
+    - Optional AI assistant: SQL completion, ask-your-data (needs
+      OpenAI key)
+    - Multi-user, workspaces, permissions
+
+    Upstream project: https://github.com/briefercloud/briefer
+    This wrapper repo: https://github.com/microlazy-apps/lazy-briefer

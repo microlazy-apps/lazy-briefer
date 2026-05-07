@@ -1,0 +1,15 @@
+params:
+  - id: OPENAI_API_KEY
+    type: password
+    name: "OpenAI API Key"
+    description: |
+      可选。仅 AI 助手 / SQL 自动补全等功能需要。
+      留空也能正常使用笔记本、仪表盘、数据库连接、Jupyter 这些核心功能。
+    default_value: ""
+    optional: true
+  - id: OPENAI_DEFAULT_MODEL_NAME
+    type: string
+    name: "OpenAI Model"
+    description: "默认调用的 OpenAI 模型名（仅当填了 API Key 时生效）"
+    default_value: "gpt-4o"
+    optional: true

@@ -1,0 +1,88 @@
+package: cloud.lazycat.app.briefer
+version: ${VERSION}
+name: Briefer
+description: 一站式数据笔记本 + 仪表盘 — 写代码或拖拽都能用，自托管开源 BI
+author: briefercloud
+license: AGPL-3.0
+homepage: https://github.com/microlazy-apps/lazy-briefer
+locales:
+  zh-CN:
+    name: Briefer 数据笔记本
+    description: 自托管 Briefer —— Notion 风格的数据笔记本 + 仪表盘
+    usage: |
+      ## 关于 Briefer
+
+      Briefer 是开源版的「数据笔记本 + 仪表盘」一体工具，做的事情类似
+      Hex / Deepnote / Mode，但完全可以自托管。它把：
+
+      - **类 Notion 的笔记本** —— 富文本 + 可执行 Python / SQL
+      - **可视化仪表盘** —— 从笔记本结果直接做图、做面板、分享
+      - **数据源连接** —— PostgreSQL、MySQL、BigQuery、Athena、Redshift、CSV …
+      - **AI 助手**（可选）—— SQL 自动补全 / 数据问答
+
+      集成在一个 Web UI 里。
+
+      ## 安装后访问
+
+      访问 `https://briefer.{你的微服域名}` 打开 Web UI，**首次进入会引导
+      你创建管理员账号 + 工作区**，按提示走完即可。
+
+      ## AI 功能（可选）
+
+      安装时填入 `OPENAI_API_KEY` 才能启用 AI 助手。不填也能正常用笔记本、
+      仪表盘、SQL 编辑器、数据连接等所有非 AI 功能。安装后想加上，去
+      LazyCat 应用设置改 `OPENAI_API_KEY` 后重启服务即可。
+
+      ## 数据持久化
+
+      - `/lzcapp/var/persist/postgres/`  —— Briefer 自己用的 Postgres 数据
+      - `/lzcapp/var/persist/jupyter/`   —— 笔记本里上传的文件、Jupyter 状态
+      - `/lzcapp/var/persist/briefer/`   —— 应用配置（含自动生成的密钥）
+
+      所有 JWT / 加密密钥由 LazyCat 的 `stable_secret` 生成并固化，重装
+      不会丢数据。
+
+      ## 资源占用
+
+      镜像约 2.2GB（内置 Postgres + pgvector + Jupyter + Node + Python +
+      Oracle Instant Client 等），首次拉取较慢。运行内存 ≥ 2GB 推荐。
+  en:
+    name: Briefer Data Notebooks
+    description: Self-hosted Briefer — Notion-like data notebooks + dashboards
+    usage: |
+      ## About Briefer
+
+      Briefer is an open-source data notebook + dashboard tool — think
+      Hex / Deepnote / Mode but self-hostable. In one Web UI you get:
+
+      - **Notion-like notebooks** with executable Python / SQL cells
+      - **Dashboards** built directly from notebook outputs
+      - **Data source connections** — PostgreSQL, MySQL, BigQuery,
+        Athena, Redshift, CSV, and more
+      - **AI assistant** (optional) — SQL completion, ask-your-data
+
+      ## Access
+
+      Open `https://briefer.{your-box-domain}`. The first visit walks
+      you through creating an admin account + workspace.
+
+      ## AI features (optional)
+
+      Provide `OPENAI_API_KEY` at install to enable the AI assistant.
+      Notebooks, dashboards, SQL editor, and data connections all work
+      without it. You can add the key later via the app settings.
+
+      ## Persistent storage
+
+      - `/lzcapp/var/persist/postgres/` — Briefer's internal Postgres
+      - `/lzcapp/var/persist/jupyter/`  — uploaded files + Jupyter state
+      - `/lzcapp/var/persist/briefer/`  — app config (auto-generated secrets)
+
+      All JWT / encryption keys are derived from LazyCat `stable_secret`
+      so reinstalling does not lose data.
+
+      ## Resource footprint
+
+      The image is ~2.2GB (bundles Postgres + pgvector + Jupyter +
+      Node + Python + Oracle Instant Client). First pull will take a
+      while. Recommended ≥ 2GB RAM.

@@ -1,0 +1,33 @@
+name: Bootstrap appstore (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semver to embed (e.g. 0.1.0)"
+        required: true
+        default: "0.1.0"
+      app_id:
+        description: "Existing app_id (skip /app/create on retry)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    uses: microlazy-apps/lazycat-ci/.github/workflows/lpk-build.yml@v0.1.0
+    with:
+      version:        ${{ inputs.version }}
+      docker-context: ./docker
+    secrets: inherit
+
+  bootstrap:
+    needs: build
+    uses: microlazy-apps/lazycat-ci/.github/workflows/bootstrap.yml@v0.1.0
+    with:
+      version: ${{ inputs.version }}
+      app_id:  ${{ inputs.app_id }}
+    secrets: inherit

@@ -1,0 +1,48 @@
+application:
+  subdomain: briefer
+  upstreams:
+    - location: /
+      backend: http://main:3000
+  public_path:
+    - /
+  health_check:
+    test_url: http://main:3000/
+    timeout: 10s
+    start_period: 180s
+
+services:
+  main:
+    image: ${LAZYCAT_IMAGE}
+    environment:
+      - TZ=Asia/Shanghai
+
+      # OpenAI key — only required for the AI chat / SQL-helper features.
+      # Leave blank to install briefer without AI; the rest of the app
+      # (notebooks, dashboards, postgres, jupyter) still works.
+      - OPENAI_API_KEY={{.U.OPENAI_API_KEY}}
+      - OPENAI_DEFAULT_MODEL_NAME={{.U.OPENAI_DEFAULT_MODEL_NAME}}
+
+      # Briefer's setup.py auto-generates these on first boot if missing,
+      # but pinning them via stable_secret keeps them deterministic across
+      # container restarts and survives /home/briefer/.config wipes.
+      - LOGIN_JWT_SECRET={{stable_secret "BRIEFER_LOGIN_JWT_SECRET"}}
+      - AUTH_JWT_SECRET={{stable_secret "BRIEFER_AUTH_JWT_SECRET"}}
+      - JUPYTER_TOKEN={{stable_secret "BRIEFER_JUPYTER_TOKEN"}}
+      - AI_BASIC_AUTH_USERNAME={{stable_secret "BRIEFER_AI_AUTH_USERNAME"}}
+      - AI_BASIC_AUTH_PASSWORD={{stable_secret "BRIEFER_AI_AUTH_PASSWORD"}}
+      - ENVIRONMENT_VARIABLES_ENCRYPTION_KEY={{stable_secret "BRIEFER_ENV_VARS_KEY"}}
+      - WORKSPACE_SECRETS_ENCRYPTION_KEY={{stable_secret "BRIEFER_WORKSPACE_KEY"}}
+      - DATASOURCES_ENCRYPTION_KEY={{stable_secret "BRIEFER_DATASOURCES_KEY"}}
+    binds:
+      # postgres data — pgvector tables, app metadata
+      - /lzcapp/var/persist/postgres:/var/lib/postgresql/data
+      # jupyter user home — uploaded files, notebook state
+      - /lzcapp/var/persist/jupyter:/home/jupyteruser
+      # briefer app config (api/web)
+      - /lzcapp/var/persist/briefer:/home/briefer/.config/briefer
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s

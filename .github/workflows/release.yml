@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        run: |
+          V="${{ github.ref_name }}"
+          echo "version=${V#v}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prep
+    uses: microlazy-apps/lazycat-ci/.github/workflows/lpk-build.yml@v0.1.0
+    with:
+      version:        ${{ needs.prep.outputs.version }}
+      docker-context: ./docker
+    secrets: inherit
+
+  publish:
+    needs: build
+    uses: microlazy-apps/lazycat-ci/.github/workflows/publish.yml@v0.1.0
+    with:
+      release-tag: ${{ github.ref_name }}
+    secrets: inherit
