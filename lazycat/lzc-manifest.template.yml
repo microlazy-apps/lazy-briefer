@@ -19,6 +19,15 @@ services:
     environment:
       - TZ=Asia/Shanghai
 
+      # Force UTF-8 locale everywhere. Default node:18-slim ships C
+      # locale, so any Python kernel / sql output containing non-ASCII
+      # bytes (Chinese, emoji, ...) crashes with
+      # "'ascii' codec can't decode byte 0xe6 ...". Set the locale on
+      # the supervisord parent so jupyter / api / ai / web all inherit.
+      - LANG=C.UTF-8
+      - LC_ALL=C.UTF-8
+      - PYTHONIOENCODING=utf-8
+
       # OpenAI-compatible API config — only required for the AI chat /
       # SQL-helper features. Leave blank to install briefer without AI;
       # the rest of the app (notebooks, dashboards, postgres, jupyter)
