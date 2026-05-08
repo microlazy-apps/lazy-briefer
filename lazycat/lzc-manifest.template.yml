@@ -19,14 +19,17 @@ services:
     environment:
       - TZ=Asia/Shanghai
 
-      # Force UTF-8 locale everywhere. Default node:18-slim ships C
-      # locale, so any Python kernel / sql output containing non-ASCII
-      # bytes (Chinese, emoji, ...) crashes with
-      # "'ascii' codec can't decode byte 0xe6 ...". Set the locale on
-      # the supervisord parent so jupyter / api / ai / web all inherit.
+      # Force UTF-8 everywhere. node:18-slim ships C locale and slim
+      # debian doesn't actually generate C.UTF-8 properly, so plain
+      # locale tweaks fall back to ASCII and any non-ASCII byte
+      # (Chinese, emoji, ...) crashes with "'ascii' codec can't decode
+      # byte ...". PYTHONUTF8=1 forces Python 3.7+ into UTF-8 mode
+      # regardless of locale; the LANG/LC vars + PYTHONIOENCODING are
+      # belt-and-suspenders for native libs and child processes.
+      - PYTHONUTF8=1
+      - PYTHONIOENCODING=utf-8
       - LANG=C.UTF-8
       - LC_ALL=C.UTF-8
-      - PYTHONIOENCODING=utf-8
 
       # OpenAI-compatible API config — only required for the AI chat /
       # SQL-helper features. Leave blank to install briefer without AI;

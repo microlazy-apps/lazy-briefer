@@ -250,19 +250,68 @@ index 0000000..3cabb35
 +
 +ENTRYPOINT []
 +CMD ["/lazycat-entrypoint.sh"]
+diff --git a/ai/api/app.py b/ai/api/app.py
+index 948fc0b..f962108 100644
+--- a/ai/api/app.py
++++ b/ai/api/app.py
+@@ -39,10 +39,15 @@ class SQLEditInputData(BaseModel):
+     tableInfo: Optional[str] = None
+     modelId: Optional[str] = None
+     openaiApiKey: Optional[str] = None
++    openaiApiBase: Optional[str] = None
+ 
+ @app.post("/v1/stream/sql/edit")
+ async def v1_steam_sql_edit(data: SQLEditInputData, _ = Depends(get_current_username)):
+-    llm = initialize_llm(model_id=data.modelId, openai_api_key=data.openaiApiKey)
++    llm = initialize_llm(
++        model_id=data.modelId,
++        openai_api_key=data.openaiApiKey,
++        openai_api_base=data.openaiApiBase,
++    )
+     chain = create_sql_edit_stream_query_chain(llm, data.dialect, data.tableInfo)
+ 
+     async def generate():
+@@ -58,11 +63,16 @@ class PythonEditInputData(BaseModel):
+     variables: str
+     modelId: Optional[str] = None
+     openaiApiKey: Optional[str] = None
++    openaiApiBase: Optional[str] = None
+ 
+ 
+ @app.post("/v1/stream/python/edit")
+ async def v1_stream_python_edit(data: PythonEditInputData, _ = Depends(get_current_username)):
+-    llm = initialize_llm(model_id=data.modelId, openai_api_key=data.openaiApiKey)
++    llm = initialize_llm(
++        model_id=data.modelId,
++        openai_api_key=data.openaiApiKey,
++        openai_api_base=data.openaiApiBase,
++    )
+     chain = create_python_edit_stream_query_chain(llm)
+ 
+     async def generate():
 diff --git a/ai/api/llms.py b/ai/api/llms.py
-index 5a1cc50..f3f6716 100644
+index 5a1cc50..5a6588b 100644
 --- a/ai/api/llms.py
 +++ b/ai/api/llms.py
-@@ -37,11 +37,18 @@ def initialize_llm(model_id=None, openai_api_key=None):
+@@ -16,7 +16,7 @@ def str_to_bool(value):
+ 
+     return value.lower() in ['true', '1', 't', 'y', 'yes']
+ 
+-def initialize_llm(model_id=None, openai_api_key=None):
++def initialize_llm(model_id=None, openai_api_key=None, openai_api_base=None):
+     openai_api_key = openai_api_key or config("OPENAI_API_KEY")
+     use_azure = config("USE_AZURE", default=False, cast=str_to_bool)
+ 
+@@ -37,11 +37,19 @@ def initialize_llm(model_id=None, openai_api_key=None):
              api_version=config("AZURE_API_VERSION", default=""),
          )
      else:
 -        # Initialize OpenAI using environment variables for API key and model name
-+        # Initialize OpenAI using environment variables for API key and model name.
-+        # Honor OPENAI_BASE_URL / OPENAI_API_BASE so self-hosted users
-+        # can target any OpenAI-compatible endpoint.
-+        base_url = config(
++        # Resolution order for the OpenAI base URL:
++        #   1. per-workspace setting (openai_api_base arg, sent by api)
++        #   2. OPENAI_BASE_URL / OPENAI_API_BASE env (container default)
++        #   3. SDK default (https://api.openai.com/v1)
++        base_url = openai_api_base or config(
 +            "OPENAI_BASE_URL",
 +            default=config("OPENAI_API_BASE", default=None),
 +        )
@@ -274,6 +323,46 @@ index 5a1cc50..f3f6716 100644
 +            base_url=base_url,
          )
      return llm
+diff --git a/apps/api/src/ai-api.ts b/apps/api/src/ai-api.ts
+index 31e99ef..6bcb4d4 100644
+--- a/apps/api/src/ai-api.ts
++++ b/apps/api/src/ai-api.ts
+@@ -17,7 +17,8 @@ export async function sqlEditStreamed(
+   onSQL: (sql: string) => void,
+   tableInfo: string | null,
+   modelId: string | null,
+-  openaiApiKey: string | null
++  openaiApiKey: string | null,
++  openaiApiBase: string | null = null
+ ): Promise<{
+   promise: Promise<void>
+   abortController: AbortController
+@@ -34,6 +35,7 @@ export async function sqlEditStreamed(
+       openaiApiKey: openaiApiKey
+         ? decrypt(openaiApiKey, config().WORKSPACE_SECRETS_ENCRYPTION_KEY)
+         : null,
++      openaiApiBase,
+     },
+     {
+       headers: {
+@@ -126,7 +128,8 @@ export async function pythonEditStreamed(
+   dataFrames: DataFrame[],
+   onSource: (source: string) => void,
+   modelId: string | null,
+-  openaiApiKey: string | null
++  openaiApiKey: string | null,
++  openaiApiBase: string | null = null
+ ): Promise<{
+   promise: Promise<void>
+   abortController: AbortController
+@@ -149,6 +152,7 @@ export async function pythonEditStreamed(
+       openaiApiKey: openaiApiKey
+         ? decrypt(openaiApiKey, config().WORKSPACE_SECRETS_ENCRYPTION_KEY)
+         : null,
++      openaiApiBase,
+     },
+     {
+       headers: {
 diff --git a/apps/api/src/datasources/structure.ts b/apps/api/src/datasources/structure.ts
 index 39bc543..a41a847 100644
 --- a/apps/api/src/datasources/structure.ts
@@ -445,11 +534,35 @@ index f861062..8590977 100644
    router.use('/tutorials', tutorialsRouter(socketServer))
    router.use('/data-sources', dataSourcesRouter(socketServer))
    router.use('/documents', documentsRouter(socketServer))
+diff --git a/apps/api/src/yjs/v2/executor/ai/python.ts b/apps/api/src/yjs/v2/executor/ai/python.ts
+index 11860f2..ce34cc2 100644
+--- a/apps/api/src/yjs/v2/executor/ai/python.ts
++++ b/apps/api/src/yjs/v2/executor/ai/python.ts
+@@ -39,7 +39,8 @@ async function editWithAI(
+     dataFrames,
+     onSource,
+     workspace?.assistantModel ?? null,
+-    workspace?.secrets?.openAiApiKey ?? null
++    workspace?.secrets?.openAiApiKey ?? null,
++    workspace?.assistantApiBaseUrl ?? null
+   )
+ }
+ 
 diff --git a/apps/api/src/yjs/v2/executor/ai/sql.ts b/apps/api/src/yjs/v2/executor/ai/sql.ts
-index 4a5c60a..8e09905 100644
+index 4a5c60a..2c79e17 100644
 --- a/apps/api/src/yjs/v2/executor/ai/sql.ts
 +++ b/apps/api/src/yjs/v2/executor/ai/sql.ts
-@@ -89,7 +89,8 @@ async function editWithAI(
+@@ -60,7 +60,8 @@ async function editWithAI(
+       // TODO: what should be the schema when duckdb?
+       null,
+       assistantModelId,
+-      workspace?.secrets?.openAiApiKey ?? null
++      workspace?.secrets?.openAiApiKey ?? null,
++      workspace?.assistantApiBaseUrl ?? null
+     )
+   }
+ 
+@@ -89,7 +90,8 @@ async function editWithAI(
      dataSource,
      structure,
      instructions,
@@ -459,7 +572,17 @@ index 4a5c60a..8e09905 100644
    )
  
    event(assistantModelId)
-@@ -134,13 +135,18 @@ async function retrieveTableInfoForQuestion(
+@@ -126,7 +128,8 @@ async function editWithAI(
+     onSuggestions,
+     tableInfo,
+     assistantModelId,
+-    workspace?.secrets?.openAiApiKey ?? null
++    workspace?.secrets?.openAiApiKey ?? null,
++    workspace?.assistantApiBaseUrl ?? null
+   )
+ }
+ 
+@@ -134,13 +137,18 @@ async function retrieveTableInfoForQuestion(
    datasource: DataSource,
    structure: DataSourceStructureStateV3 | null,
    question: string,
