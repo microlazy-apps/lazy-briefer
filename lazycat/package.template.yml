@@ -8,99 +8,109 @@ homepage: https://github.com/microlazy-apps/lazy-briefer
 locales:
   zh-CN:
     name: Briefer 数据笔记本
-    description: 自托管 Briefer —— Notion 风格的数据笔记本 + 仪表盘
+    description: 自托管 Briefer —— Notion 风格的数据笔记本 + 仪表盘，AI 助手支持任意 OpenAI 兼容服务
     usage: |
       ## 关于 Briefer
 
       Briefer 是开源版的「数据笔记本 + 仪表盘」一体工具，做的事情类似
-      Hex / Deepnote / Mode，但完全可以自托管。它把：
+      Hex / Deepnote / Mode，完全自托管：
 
       - **类 Notion 的笔记本** —— 富文本 + 可执行 Python / SQL
-      - **可视化仪表盘** —— 从笔记本结果直接做图、做面板、分享
-      - **数据源连接** —— PostgreSQL、MySQL、BigQuery、Athena、Redshift、CSV …
-      - **AI 助手**（可选）—— SQL 自动补全 / 数据问答
-
-      集成在一个 Web UI 里。
+      - **可视化仪表盘** —— 从笔记本结果直接拼出仪表盘并分享
+      - **数据源连接** —— PostgreSQL / MySQL / BigQuery / Athena /
+        Redshift / Databricks / Oracle / CSV
+      - **AI 助手**（可选）—— SQL/Python 自动补全、修复，支持任意
+        OpenAI 兼容服务
 
       ## 安装后访问
 
-      访问 `https://briefer.{你的微服域名}` 打开 Web UI，**首次进入会引导
-      你创建管理员账号 + 工作区**，按提示走完即可。
+      `https://briefer.{你的微服域名}` 打开 Web UI，**首次进入会引导
+      创建管理员账号 + 工作区**。
 
-      ## AI 功能（可选，支持任意 OpenAI 兼容服务）
+      ## AI 功能 — 任意 OpenAI 兼容服务（per-workspace 配置）
 
-      安装时填入 **API Key** 才能启用 AI 助手。三个相关字段：
+      在每个工作区的 **Settings → AI** 里独立填三项：
 
-      - **API Key** —— 你那家服务商发的 key
-      - **API Base URL** —— OpenAI 兼容的 endpoint，默认指向官方
-        `https://api.openai.com/v1`，可以改成 DeepSeek / 通义千问 /
-        SiliconFlow / OpenRouter / 本地 Ollama / 本地 vLLM 等
-      - **Model** —— 模型名（如 `gpt-4o` / `deepseek-chat` /
-        `qwen-plus` / `llama3.2` 等）
+      - **Assistant model** —— 模型名（自由输入：`gpt-4o` /
+        `deepseek-chat` / `qwen-plus` / `llama3.2` 等）
+      - **AI API Base URL** —— Endpoint。留空走 OpenAI 官方；或填
+        `https://api.deepseek.com/v1` / 通义千问 dashscope /
+        SiliconFlow / OpenRouter / 本地 Ollama (`http://host.docker.internal:11434/v1`) /
+        本地 vLLM 等
+      - **OpenAI API Key** —— 服务商的 key（加密存储）
+      - **Test AI connection** —— 一键发一次最小请求验证三项配置
 
-      不填也能正常用笔记本、仪表盘、SQL 编辑器、数据连接这些非 AI 功能。
-      安装后想改，去 LazyCat 应用设置改字段后重启即可。
+      不配置 AI 也能正常用笔记本、仪表盘、SQL 编辑器、数据连接所有非 AI 功能。
+
+      > 部分服务商（DeepSeek / 通义千问 / Ollama 等）没有
+      > `/v1/embeddings` 端点。本应用已做兼容：schema 索引和 SQL AI
+      > 自动降级到 full-schema 模式，不会因 embedding 失败而崩溃。
 
       ## 数据持久化
 
-      - `/lzcapp/var/persist/postgres/`  —— Briefer 自己用的 Postgres 数据
+      - `/lzcapp/var/persist/postgres/`  —— Briefer 自己的 Postgres 数据
       - `/lzcapp/var/persist/jupyter/`   —— 笔记本里上传的文件、Jupyter 状态
-      - `/lzcapp/var/persist/briefer/`   —— 应用配置（含自动生成的密钥）
+      - `/lzcapp/var/persist/briefer/`   —— 应用配置
 
-      所有 JWT / 加密密钥由 LazyCat 的 `stable_secret` 生成并固化，重装
-      不会丢数据。
+      所有 JWT / 加密密钥由 LazyCat 的 `stable_secret` 派生，重装不会
+      丢数据。
 
       ## 资源占用
 
-      镜像约 2.2GB（内置 Postgres + pgvector + Jupyter + Node + Python +
+      镜像约 2.5GB（内置 Postgres + pgvector + Jupyter + Node + Python +
       Oracle Instant Client 等），首次拉取较慢。运行内存 ≥ 2GB 推荐。
   en:
     name: Briefer Data Notebooks
-    description: Self-hosted Briefer — Notion-like data notebooks + dashboards
+    description: Self-hosted Briefer — Notion-style data notebooks + dashboards, AI assistant supports any OpenAI-compatible provider
     usage: |
       ## About Briefer
 
-      Briefer is an open-source data notebook + dashboard tool — think
-      Hex / Deepnote / Mode but self-hostable. In one Web UI you get:
+      Briefer is an open-source data notebook + dashboard tool — like
+      Hex / Deepnote / Mode but self-hostable. One Web UI gives you:
 
-      - **Notion-like notebooks** with executable Python / SQL cells
+      - **Notion-style notebooks** with executable Python / SQL cells
       - **Dashboards** built directly from notebook outputs
-      - **Data source connections** — PostgreSQL, MySQL, BigQuery,
-        Athena, Redshift, CSV, and more
-      - **AI assistant** (optional) — SQL completion, ask-your-data
+      - **Data source connectors** — PostgreSQL / MySQL / BigQuery /
+        Athena / Redshift / Databricks / Oracle / CSV
+      - **AI assistant** (optional) — SQL/Python edit + fix, works with
+        any OpenAI-compatible provider
 
       ## Access
 
-      Open `https://briefer.{your-box-domain}`. The first visit walks
-      you through creating an admin account + workspace.
+      Open `https://briefer.{your-box-domain}`. First visit walks you
+      through creating an admin account + workspace.
 
-      ## AI features (optional, any OpenAI-compatible endpoint)
+      ## AI — any OpenAI-compatible provider (per-workspace)
 
-      Provide an **API Key** at install to enable the AI assistant.
-      Three related fields:
+      Configure each workspace under **Settings → AI**:
 
-      - **API Key** — from your provider
-      - **API Base URL** — OpenAI-compatible endpoint, defaults to
-        official `https://api.openai.com/v1`. You can point it at
-        DeepSeek / Qwen / SiliconFlow / OpenRouter / local Ollama /
-        local vLLM / etc.
-      - **Model** — model name (`gpt-4o`, `deepseek-chat`,
-        `qwen-plus`, `llama3.2`, ...)
+      - **Assistant model** — free-text input (`gpt-4o`,
+        `deepseek-chat`, `qwen-plus`, `llama3.2`, …)
+      - **AI API Base URL** — endpoint. Leave blank for OpenAI; or
+        DeepSeek / Qwen DashScope / SiliconFlow / OpenRouter / local
+        Ollama / local vLLM
+      - **OpenAI API Key** — provider key, encrypted at rest
+      - **Test AI connection** — one-click smoke-test of the combo
 
-      Notebooks, dashboards, SQL editor, and data connections all work
-      without it. You can add or change these later via app settings.
+      Skipping AI is fine — notebooks, dashboards, SQL editor, and data
+      connections all work without it.
+
+      > Some OpenAI-compatible providers (DeepSeek, Qwen, Ollama) don't
+      > implement `/v1/embeddings`. The wrapper handles this gracefully:
+      > schema indexing + SQL AI fall back to full-schema mode when
+      > embeddings 404.
 
       ## Persistent storage
 
       - `/lzcapp/var/persist/postgres/` — Briefer's internal Postgres
       - `/lzcapp/var/persist/jupyter/`  — uploaded files + Jupyter state
-      - `/lzcapp/var/persist/briefer/`  — app config (auto-generated secrets)
+      - `/lzcapp/var/persist/briefer/`  — app config
 
       All JWT / encryption keys are derived from LazyCat `stable_secret`
-      so reinstalling does not lose data.
+      so reinstalling preserves encrypted data.
 
       ## Resource footprint
 
-      The image is ~2.2GB (bundles Postgres + pgvector + Jupyter +
-      Node + Python + Oracle Instant Client). First pull will take a
-      while. Recommended ≥ 2GB RAM.
+      The image is ~2.5GB (bundles Postgres + pgvector + Jupyter +
+      Node + Python + Oracle Instant Client). First pull takes a
+      while. ≥ 2GB RAM recommended.

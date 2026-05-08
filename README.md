@@ -6,10 +6,10 @@ a self-hosted, open-source data notebook + dashboard tool.
 ## Install
 
 ```text
-LazyCat 应用市场 → 搜索 "Briefer" → 安装（可选填 OPENAI_API_KEY）
+LazyCat 应用市场 → 搜索 "Briefer" → 安装
 ```
 
-Then open `https://briefer.{your-box-domain}` in any browser. The first
+Then open `https://briefer.{your-box-domain}` in any browser. First
 visit walks you through creating an admin account + workspace.
 
 ## What this is
@@ -21,58 +21,75 @@ Hex / Deepnote / Mode, but you run it yourself.
 Connectors out of the box: PostgreSQL, MySQL, BigQuery, Athena,
 Redshift, Databricks, Oracle, CSV.
 
+## AI assistant — any OpenAI-compatible provider
+
+Each workspace's AI configuration is set in **Settings → AI**:
+
+- **Assistant model** — free-text input (e.g. `gpt-4o`, `deepseek-chat`,
+  `qwen-plus`, `llama3.2`)
+- **AI API Base URL** — the endpoint (leave blank for OpenAI; or set
+  `https://api.deepseek.com/v1`,
+  `https://dashscope.aliyuncs.com/compatible-mode/v1`,
+  `http://host.docker.internal:11434/v1`, …)
+- **OpenAI API Key** — provider key, encrypted at rest
+- **Test AI connection** — sends a 1-token chat completion to verify
+  the combo works
+
+The AI assistant is optional. Notebooks, dashboards, SQL editor, and
+data connections all work without it.
+
+> ⚠️ Many OpenAI-compatible providers (DeepSeek, Qwen, Ollama …) don't
+> implement `/v1/embeddings`. The wrapper handles this gracefully:
+> schema explorer + SQL block AI fall back to full-schema mode when
+> embedding calls 404, so the assistant still works on those providers.
+
 ## Architecture
 
-This wrapper is a single retag of `briefercloud/briefer:v0.0.112`
-(pinned by sha256 digest). The upstream image bundles every service
-with supervisord:
+Vendored upstream + a single patch.
 
-- Postgres 15 + pgvector (internal app metadata)
-- Jupyter Server (sandboxed Python execution)
-- AI service (FastAPI)
-- API (Node.js)
-- Web (Next.js)
-- nginx (listens on 3000, fronts web:4000 + api:8080)
+- `vendor/briefer/` — git subtree pinned to `briefercloud/briefer` at
+  the upstream version tag (currently `v0.0.112`).
+- `patches/01-lazycat-base-url-and-shim.patch` — applied at CI build
+  time. Adds the per-workspace AI Base URL field, an entrypoint shim
+  for chowns / IPv6 / encryption-key length / pg-seed copy, and
+  build-time pg-seed snapshots.
 
-So we only ship a `docker/Dockerfile` with one `FROM` line plus the
-lazycat manifest. No upstream source vendored, no patches applied.
+The image still ships the upstream architecture: Postgres 15 +
+pgvector, Jupyter Server, AI service (FastAPI), API (Node), Web
+(Next.js), nginx — all started by supervisord, behind nginx on port
+3000.
 
 ## Persistent storage
 
 | Path on host | Path in container | Contents |
 |---|---|---|
-| `/lzcapp/var/persist/postgres` | `/var/lib/postgresql/data` | Briefer's internal Postgres |
+| `/lzcapp/var/persist/postgres` | `/var/lib/postgresql/data` | Briefer metadata + workspace state |
 | `/lzcapp/var/persist/jupyter`  | `/home/jupyteruser`        | Notebook uploads + Jupyter state |
-| `/lzcapp/var/persist/briefer`  | `/home/briefer/.config/briefer` | App config (auto-generated secrets) |
+| `/lzcapp/var/persist/briefer`  | `/home/briefer/.config/briefer` | App config (`briefer.json`) |
 
-JWT / encryption keys are derived from LazyCat `stable_secret` so they
-survive container restarts and reinstalls without losing data.
-
-## Optional AI
-
-Provide `OPENAI_API_KEY` at install (deploy params) to enable the AI
-assistant (SQL completion, ask-your-data). Notebooks, dashboards, SQL
-editor, and data connections all work without it.
+JWT / encryption keys come from lazycat `stable_secret` (deterministic
+across reinstalls).
 
 ## Build / release flow
 
 Standard `microlazy-apps` lazycat-ci pattern:
 
-- Push a `v*` tag → `release.yml` builds and publishes the lpk to
-  the GitHub Release and the lazycat appstore.
-- First-time submission: run `bootstrap-app.yml` once via the Actions
-  tab.
+- Push a `v*` tag → `release.yml` builds + pushes ghcr image + ships
+  lpk to the GitHub Release. `publish-appstore` succeeds once the app
+  is bootstrapped.
+- First time only: trigger `bootstrap-app.yml` via Actions tab to
+  register the app at lazycat developer center.
 
 ## Bumping upstream
 
 ```sh
-TAG=v0.0.112  # whatever the new upstream tag is
-docker pull briefercloud/briefer:$TAG
-DIG=$(docker inspect --format '{{index .RepoDigests 0}}' briefercloud/briefer:$TAG | cut -d@ -f2)
-sed -i "s|sha256:[a-f0-9]*|$DIG|" docker/Dockerfile
-git commit -am "chore: bump upstream to $TAG ($DIG)"
-git tag vX.Y.Z && git push origin main vX.Y.Z
+git subtree pull --prefix=vendor/briefer \
+  https://github.com/briefercloud/briefer.git vX.Y.Z --squash
+git apply --check patches/*.patch -p1 --directory=vendor/briefer
 ```
+
+If a patched file moved or its surrounding context changed, regenerate
+the patch (see `CLAUDE.md`).
 
 ## License
 

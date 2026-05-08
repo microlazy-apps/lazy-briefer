@@ -1,7 +1,7 @@
 source: https://github.com/briefercloud/briefer
 source_author: briefercloud
 is_original: false
-keywords: notebook,dashboard,bi,analytics,jupyter,postgres,sql,python,visualization,self-hosted
+keywords: notebook,dashboard,bi,analytics,jupyter,postgres,sql,python,visualization,self-hosted,ai,deepseek,qwen,ollama
 
 support_pc: true
 support_mobile: false
@@ -14,32 +14,44 @@ screenshots:
 
 description:
   zh-CN: |
-    自托管 Briefer —— 把数据笔记本和仪表盘合二为一。
+    自托管 Briefer —— 数据笔记本 + 仪表盘合二为一，AI 助手支持任意
+    OpenAI 兼容服务。
 
     特性
     - 类 Notion 的富文本 + 可执行 Python / SQL 笔记本
     - 笔记本结果直接拼成仪表盘并分享
     - 多种数据源开箱即用：PostgreSQL / MySQL / BigQuery / Athena /
-      Redshift / Databricks / Oracle / CSV …
+      Redshift / Databricks / Oracle / CSV
     - 内置 Jupyter Server 跑 Python 代码（沙箱化）
-    - 内置 Postgres + pgvector，无需另外搭数据库
-    - 可选 AI 助手：SQL 自动补全、对数据自然语言问答（需要 OpenAI Key）
+    - 内置 Postgres + pgvector，无需额外数据库
+    - **AI 助手按工作区独立配置** —— Web UI 直接填模型名、Base URL、
+      API Key，一键 Test 验证连接。支持 OpenAI / Azure / DeepSeek /
+      通义千问 / SiliconFlow / OpenRouter / 本地 Ollama / 本地 vLLM 等
+      所有 OpenAI 兼容服务
+    - **不依赖 embeddings**：DeepSeek、Ollama 等无 /v1/embeddings 的
+      服务也能用，schema 索引和 SQL AI 自动降级
     - 多用户、工作区、权限管理
 
     上游项目: https://github.com/briefercloud/briefer
     本仓库（懒猫包装）: https://github.com/microlazy-apps/lazy-briefer
   en: |
-    Self-hosted Briefer — data notebooks + dashboards in one app.
+    Self-hosted Briefer — data notebooks + dashboards in one app, with
+    an AI assistant that works with any OpenAI-compatible provider.
 
     Features
     - Notion-style rich text + executable Python / SQL cells
     - Build dashboards directly from notebook outputs and share
-    - Out-of-the-box data sources: PostgreSQL / MySQL / BigQuery /
-      Athena / Redshift / Databricks / Oracle / CSV / ...
+    - Data source connectors out of the box: PostgreSQL / MySQL /
+      BigQuery / Athena / Redshift / Databricks / Oracle / CSV
     - Bundled Jupyter Server for sandboxed Python execution
     - Bundled Postgres + pgvector, no external DB required
-    - Optional AI assistant: SQL completion, ask-your-data (needs
-      OpenAI key)
+    - **Per-workspace AI configuration** — fill model name, Base URL,
+      and API Key in the UI, one-click Test to verify. Works with
+      OpenAI / Azure / DeepSeek / Qwen / SiliconFlow / OpenRouter /
+      local Ollama / local vLLM, anything OpenAI-compatible
+    - **Embeddings-free fallback** — providers without /v1/embeddings
+      (DeepSeek, Ollama, …) still work; schema indexing and SQL AI
+      gracefully degrade to full-schema mode
     - Multi-user, workspaces, permissions
 
     Upstream project: https://github.com/briefercloud/briefer
