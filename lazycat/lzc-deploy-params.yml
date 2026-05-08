@@ -1,15 +1,42 @@
 params:
   - id: OPENAI_API_KEY
     type: password
-    name: "OpenAI API Key"
+    name: "API Key"
     description: |
-      可选。仅 AI 助手 / SQL 自动补全等功能需要。
-      留空也能正常使用笔记本、仪表盘、数据库连接、Jupyter 这些核心功能。
+      可选。AI 助手 / SQL 自动补全功能需要的 API Key。
+
+      支持任何 OpenAI 兼容的服务（OpenAI / Azure OpenAI / DeepSeek /
+      Qwen / Ollama / vLLM / OpenRouter 等），通过下方 "API Base URL"
+      和 "Model" 切换。
+
+      留空则不启用 AI；笔记本、仪表盘、数据源连接、Jupyter 这些核心
+      功能都能正常用。
     default_value: ""
+    optional: true
+  - id: OPENAI_BASE_URL
+    type: string
+    name: "API Base URL"
+    description: |
+      OpenAI 兼容 API 的 Base URL。常见示例：
+
+      - OpenAI 官方:    https://api.openai.com/v1
+      - DeepSeek:       https://api.deepseek.com/v1
+      - 通义千问:        https://dashscope.aliyuncs.com/compatible-mode/v1
+      - SiliconFlow:    https://api.siliconflow.cn/v1
+      - 本地 Ollama:    http://host.docker.internal:11434/v1
+      - 本地 vLLM:      http://<your-ip>:8000/v1
+      - OpenRouter:     https://openrouter.ai/api/v1
+    default_value: "https://api.openai.com/v1"
     optional: true
   - id: OPENAI_DEFAULT_MODEL_NAME
     type: string
-    name: "OpenAI Model"
-    description: "默认调用的 OpenAI 模型名（仅当填了 API Key 时生效）"
+    name: "Model"
+    description: |
+      默认调用的模型名。例如：
+
+      - OpenAI:    gpt-4o / gpt-4o-mini / gpt-4-turbo
+      - DeepSeek:  deepseek-chat / deepseek-coder
+      - 通义千问:   qwen-plus / qwen-max / qwen2.5-coder-32b-instruct
+      - Ollama:    llama3.2 / qwen2.5-coder
     default_value: "gpt-4o"
     optional: true

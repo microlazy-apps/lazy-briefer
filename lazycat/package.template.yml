@@ -27,11 +27,19 @@ locales:
       访问 `https://briefer.{你的微服域名}` 打开 Web UI，**首次进入会引导
       你创建管理员账号 + 工作区**，按提示走完即可。
 
-      ## AI 功能（可选）
+      ## AI 功能（可选，支持任意 OpenAI 兼容服务）
 
-      安装时填入 `OPENAI_API_KEY` 才能启用 AI 助手。不填也能正常用笔记本、
-      仪表盘、SQL 编辑器、数据连接等所有非 AI 功能。安装后想加上，去
-      LazyCat 应用设置改 `OPENAI_API_KEY` 后重启服务即可。
+      安装时填入 **API Key** 才能启用 AI 助手。三个相关字段：
+
+      - **API Key** —— 你那家服务商发的 key
+      - **API Base URL** —— OpenAI 兼容的 endpoint，默认指向官方
+        `https://api.openai.com/v1`，可以改成 DeepSeek / 通义千问 /
+        SiliconFlow / OpenRouter / 本地 Ollama / 本地 vLLM 等
+      - **Model** —— 模型名（如 `gpt-4o` / `deepseek-chat` /
+        `qwen-plus` / `llama3.2` 等）
+
+      不填也能正常用笔记本、仪表盘、SQL 编辑器、数据连接这些非 AI 功能。
+      安装后想改，去 LazyCat 应用设置改字段后重启即可。
 
       ## 数据持久化
 
@@ -66,11 +74,21 @@ locales:
       Open `https://briefer.{your-box-domain}`. The first visit walks
       you through creating an admin account + workspace.
 
-      ## AI features (optional)
+      ## AI features (optional, any OpenAI-compatible endpoint)
 
-      Provide `OPENAI_API_KEY` at install to enable the AI assistant.
+      Provide an **API Key** at install to enable the AI assistant.
+      Three related fields:
+
+      - **API Key** — from your provider
+      - **API Base URL** — OpenAI-compatible endpoint, defaults to
+        official `https://api.openai.com/v1`. You can point it at
+        DeepSeek / Qwen / SiliconFlow / OpenRouter / local Ollama /
+        local vLLM / etc.
+      - **Model** — model name (`gpt-4o`, `deepseek-chat`,
+        `qwen-plus`, `llama3.2`, ...)
+
       Notebooks, dashboards, SQL editor, and data connections all work
-      without it. You can add the key later via the app settings.
+      without it. You can add or change these later via app settings.
 
       ## Persistent storage
 

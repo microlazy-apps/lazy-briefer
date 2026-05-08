@@ -19,10 +19,19 @@ services:
     environment:
       - TZ=Asia/Shanghai
 
-      # OpenAI key — only required for the AI chat / SQL-helper features.
-      # Leave blank to install briefer without AI; the rest of the app
-      # (notebooks, dashboards, postgres, jupyter) still works.
+      # OpenAI-compatible API config — only required for the AI chat /
+      # SQL-helper features. Leave blank to install briefer without AI;
+      # the rest of the app (notebooks, dashboards, postgres, jupyter)
+      # still works.
+      #
+      # langchain_openai picks up OPENAI_BASE_URL / OPENAI_API_BASE
+      # automatically (env-var version varies between versions; we set
+      # both for safety). Users can point this at OpenAI / Azure /
+      # DeepSeek / Qwen / Ollama / vLLM / OpenRouter / ... — any
+      # OpenAI-compatible endpoint.
       - OPENAI_API_KEY={{.U.OPENAI_API_KEY}}
+      - OPENAI_BASE_URL={{.U.OPENAI_BASE_URL}}
+      - OPENAI_API_BASE={{.U.OPENAI_BASE_URL}}
       - OPENAI_DEFAULT_MODEL_NAME={{.U.OPENAI_DEFAULT_MODEL_NAME}}
 
       # Briefer's setup.py auto-generates these on first boot if missing,
