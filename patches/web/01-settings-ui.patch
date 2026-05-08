@@ -205,3 +205,16 @@ index aa96125..4766a0d 100644
    workspaceEditBase.extend({ openAiApiKey: z.string() }),
  ])
  
+
+diff --git a/packages/database/prisma/schema.prisma b/packages/database/prisma/schema.prisma
+index 0411841..53e6f35 100644
+--- a/packages/database/prisma/schema.prisma
++++ b/packages/database/prisma/schema.prisma
+@@ -494,6 +494,7 @@ model Workspace {
+   ownerId        String   @db.Uuid
+   secretsId      String?  @unique @db.Uuid
+   assistantModel String   @default("gpt-4o")
++  assistantApiBaseUrl String?
+ 
+   createdAt DateTime @default(now())
+   updatedAt DateTime @default(now()) @updatedAt

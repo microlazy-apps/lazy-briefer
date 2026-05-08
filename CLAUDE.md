@@ -47,7 +47,7 @@ done
 | service | image | upstream / our build | role |
 |---|---|---|---|
 | `postgres` | `${LAZYCAT_IMAGE_POSTGRES_SEED}` | `docker/postgres-seed/` | pgvector + build-time prisma seed |
-| `jupyter` | `${LAZYCAT_IMAGE_JUPYTER}` | upstream `apps/api/jupyter.Dockerfile` | notebook executor (no patches) |
+| `jupyter` | `${LAZYCAT_IMAGE_JUPYTER}` | `docker/jupyter/` (mirrors upstream `apps/api/jupyter.Dockerfile` on bookworm) | notebook executor (no patches) |
 | `ai` | `${LAZYCAT_IMAGE_AI}` | `docker/ai/` + `patches/ai/` | LLM bridge (per-workspace base_url) |
 | `api` | `${LAZYCAT_IMAGE_API}` | `docker/api/` + `patches/api/` | Node API + prisma migrate at boot |
 | `web` | `${LAZYCAT_IMAGE_WEB}` | `docker/web/` + `patches/web/` | Next.js standalone |

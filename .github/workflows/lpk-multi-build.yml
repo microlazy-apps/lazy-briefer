@@ -44,7 +44,7 @@ jobs:
             entrypoint-dest: postgres-seed-entrypoint.sh
             patches: ""
           - name: jupyter
-            dockerfile: vendor/briefer/apps/api/jupyter.Dockerfile
+            dockerfile: docker/jupyter/Dockerfile
             context-override: vendor/briefer/apps/api
             entrypoint: ""
             entrypoint-dest: ""
