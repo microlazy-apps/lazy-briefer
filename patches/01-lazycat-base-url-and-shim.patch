@@ -274,11 +274,32 @@ index 5a1cc50..f3f6716 100644
 +            base_url=base_url,
          )
      return llm
+diff --git a/apps/api/src/datasources/structure.ts b/apps/api/src/datasources/structure.ts
+index 39bc543..a41a847 100644
+--- a/apps/api/src/datasources/structure.ts
++++ b/apps/api/src/datasources/structure.ts
+@@ -353,6 +353,7 @@ async function _refreshDataSourceStructure(
+   } else {
+     openAiApiKey = config().OPENAI_API_KEY
+   }
++  const apiBaseUrl = workspace.assistantApiBaseUrl ?? null
+ 
+   const updateQueue = new PQueue({ concurrency: 1 })
+   const tables: { schema: string; table: string }[] = []
+@@ -367,7 +368,7 @@ async function _refreshDataSourceStructure(
+         ddl += `  ${c.name} ${c.type}\n`
+       }
+       try {
+-        embeddingResult = await createEmbedding(ddl, openAiApiKey)
++        embeddingResult = await createEmbedding(ddl, openAiApiKey, apiBaseUrl)
+       } catch (err) {
+         logger().error(
+           {
 diff --git a/apps/api/src/embedding.ts b/apps/api/src/embedding.ts
-index ae625d8..d455580 100644
+index ae625d8..d2fdd40 100644
 --- a/apps/api/src/embedding.ts
 +++ b/apps/api/src/embedding.ts
-@@ -18,7 +18,14 @@ const BEDROCK_EMBEDDING_MODELS = [
+@@ -18,11 +18,19 @@ const BEDROCK_EMBEDDING_MODELS = [
    'amazon.titan-embed-text-v1',
  ]
  
@@ -294,17 +315,40 @@ index ae625d8..d455580 100644
  
  export async function createEmbedding(
    input: string,
-@@ -66,19 +73,27 @@ async function createEmbeddingFromOpenAI(
+-  openAiApiKey: string | null
++  openAiApiKey: string | null,
++  apiBaseUrl?: string | null
+ ): Promise<{ embedding: number[]; model: string } | null> {
+   const inputChecksum = createHash('sha256').update(input).digest('hex')
+   for (const model of MODELS) {
+@@ -52,7 +60,8 @@ export async function createEmbedding(
+     const result = await createEmbeddingFromOpenAI(
+       input,
+       inputChecksum,
+-      openAiApiKey
++      openAiApiKey,
++      apiBaseUrl ?? null
+     )
+     return result
+   }
+@@ -64,21 +73,33 @@ export async function createEmbedding(
+ async function createEmbeddingFromOpenAI(
+   input: string,
    inputChecksum: string,
-   openAiApiKey: string
+-  openAiApiKey: string
++  openAiApiKey: string,
++  apiBaseUrl: string | null
  ): Promise<{ embedding: number[]; model: string }> {
 -  const openai = new OpenAI({ apiKey: openAiApiKey })
-+  // Honor OPENAI_BASE_URL / OPENAI_API_BASE so self-hosters can point
-+  // embeddings at any OpenAI-compatible endpoint (DeepSeek, Qwen,
-+  // SiliconFlow, Ollama, ...). Falls back to the SDK default
-+  // (https://api.openai.com/v1) when neither is set.
++  // Resolution order for the OpenAI base URL:
++  //   1. per-workspace setting (apiBaseUrl arg)
++  //   2. OPENAI_BASE_URL / OPENAI_API_BASE env (container default)
++  //   3. SDK default (https://api.openai.com/v1)
 +  const baseURL =
-+    process.env['OPENAI_BASE_URL'] || process.env['OPENAI_API_BASE'] || undefined
++    apiBaseUrl ||
++    process.env['OPENAI_BASE_URL'] ||
++    process.env['OPENAI_API_BASE'] ||
++    undefined
 +  const embeddingModel =
 +    process.env['OPENAI_EMBEDDING_MODEL'] || OPENAI_EMBEDDING_MODEL
 +  const openai = new OpenAI({ apiKey: openAiApiKey, baseURL })
@@ -327,6 +371,303 @@ index ae625d8..d455580 100644
  }
  
  async function persistEmbedding(
+diff --git a/apps/api/src/v1/workspaces/workspace/index.ts b/apps/api/src/v1/workspaces/workspace/index.ts
+index f861062..8590977 100644
+--- a/apps/api/src/v1/workspaces/workspace/index.ts
++++ b/apps/api/src/v1/workspaces/workspace/index.ts
+@@ -1,4 +1,5 @@
+ import { Router } from 'express'
++import { OpenAI } from 'openai'
+ 
+ import dataSourcesRouter from './data-sources/index.js'
+ import documentsRouter from './documents/index.js'
+@@ -8,7 +9,12 @@ import environmentVariablesRouter from './environment-variables.js'
+ import { IOServer } from '../../../websocket/index.js'
+ import { getParam } from '../../../utils/express.js'
+ import { broadcastDocuments } from '../../../websocket/workspace/documents.js'
+-import { UserWorkspaceRole, updateWorkspace } from '@briefer/database'
++import {
++  UserWorkspaceRole,
++  updateWorkspace,
++  getWorkspaceWithSecrets,
++  decrypt,
++} from '@briefer/database'
+ import filesRouter from './files.js'
+ import componentsRouter from './components.js'
+ import { canUpdateWorkspace, hasWorkspaceRoles } from '../../../auth/token.js'
+@@ -85,6 +91,49 @@ export default function workspaceRouter(socketServer: IOServer) {
+     res.status(200).json(updatedWorkspace)
+   })
+ 
++  // Lazycat: smoke-test the AI endpoint configured for this workspace.
++  // Sends a 1-token chat completion against (assistantApiBaseUrl,
++  // assistantModel, openAiApiKey) and returns ok/false + a short message.
++  router.post('/ai-test', isAdmin, async (req, res) => {
++    const workspaceId = getParam(req, 'workspaceId')
++    try {
++      const ws = await getWorkspaceWithSecrets(workspaceId)
++      if (!ws) {
++        res.status(404).json({ ok: false, message: 'workspace not found' })
++        return
++      }
++      let apiKey: string | null = ws.secrets?.openAiApiKey ?? null
++      if (apiKey) {
++        apiKey = decrypt(apiKey, config().WORKSPACE_SECRETS_ENCRYPTION_KEY)
++      } else {
++        apiKey = config().OPENAI_API_KEY
++      }
++      if (!apiKey) {
++        res
++          .status(400)
++          .json({ ok: false, message: 'no API key configured' })
++        return
++      }
++      const baseURL =
++        ws.assistantApiBaseUrl ||
++        process.env['OPENAI_BASE_URL'] ||
++        process.env['OPENAI_API_BASE'] ||
++        undefined
++      const openai = new OpenAI({ apiKey, baseURL })
++      const r = await openai.chat.completions.create({
++        model: ws.assistantModel || 'gpt-4o',
++        messages: [{ role: 'user', content: 'ping' }],
++        max_tokens: 1,
++      })
++      res
++        .status(200)
++        .json({ ok: true, message: `Got reply (model: ${r.model})` })
++    } catch (err) {
++      const msg = err instanceof Error ? err.message : String(err)
++      res.status(200).json({ ok: false, message: msg })
++    }
++  })
++
+   router.use('/tutorials', tutorialsRouter(socketServer))
+   router.use('/data-sources', dataSourcesRouter(socketServer))
+   router.use('/documents', documentsRouter(socketServer))
+diff --git a/apps/api/src/yjs/v2/executor/ai/sql.ts b/apps/api/src/yjs/v2/executor/ai/sql.ts
+index 4a5c60a..8e09905 100644
+--- a/apps/api/src/yjs/v2/executor/ai/sql.ts
++++ b/apps/api/src/yjs/v2/executor/ai/sql.ts
+@@ -89,7 +89,8 @@ async function editWithAI(
+     dataSource,
+     structure,
+     instructions,
+-    openAiApiKey
++    openAiApiKey,
++    workspace?.assistantApiBaseUrl ?? null
+   )
+ 
+   event(assistantModelId)
+@@ -134,13 +135,18 @@ async function retrieveTableInfoForQuestion(
+   datasource: DataSource,
+   structure: DataSourceStructureStateV3 | null,
+   question: string,
+-  openAiApiKey: string | null
++  openAiApiKey: string | null,
++  apiBaseUrl: string | null = null
+ ): Promise<string | null> {
+   if (!structure) {
+     return null
+   }
+ 
+-  const questionEmbeddingResult = await createEmbedding(question, openAiApiKey)
++  const questionEmbeddingResult = await createEmbedding(
++    question,
++    openAiApiKey,
++    apiBaseUrl
++  )
+   let tableInfo: string
+   if (questionEmbeddingResult) {
+     const raw = await prisma()
+diff --git a/apps/web/src/pages/workspaces/[workspaceId]/settings/index.tsx b/apps/web/src/pages/workspaces/[workspaceId]/settings/index.tsx
+index 284fe65..d5630c9 100644
+--- a/apps/web/src/pages/workspaces/[workspaceId]/settings/index.tsx
++++ b/apps/web/src/pages/workspaces/[workspaceId]/settings/index.tsx
+@@ -48,6 +48,8 @@ export default function SettingsPage() {
+     isEditingOpenAIKey: false,
+     newName: '',
+     newOpenAIKey: '',
++    testStatus: 'idle' as 'idle' | 'pending' | 'success' | 'error',
++    testMessage: '',
+   })
+ 
+   const isAdmin = session.data?.roles[workspaceId] === 'admin'
+@@ -225,7 +227,7 @@ export default function SettingsPage() {
+               </div>
+             )}
+ 
+-            {/* Model selection */}
++            {/* Model name (free-text in self-hosted: any OpenAI-compatible model) */}
+             <div className="space-y-8 border-b border-gray-900/10 pb-0 sm:space-y-0 sm:divide-y sm:divide-gray-900/10 ">
+               <div className="flex items-center justify-between sm:gap-4 sm:py-6">
+                 <div className="flex flex-col gap-y-2 justify-left">
+@@ -236,33 +238,60 @@ export default function SettingsPage() {
+                     Assistant model
+                   </label>
+                   <span className="text-xs text-gray-400">
+-                    Choose the model that will power your assistant.
++                    Any OpenAI-compatible model name (e.g. gpt-4o,
++                    deepseek-chat, qwen-plus, llama3.2).
+                   </span>
+                 </div>
+ 
+-                <Tooltip
+-                  title="Different assistant models are not available in the open-source version"
+-                  message="Upgrade to Briefer cloud’s professional tier to have access to them."
+-                  tooltipClassname="w-72 text-center"
+-                  active
+-                  className="w-1/2 flex items-center justify-center"
+-                >
+-                  <select
+-                    id="assistant_model"
+-                    name="assistant_model"
+-                    className="block w-1/2 rounded-md border-0 py-1.5 pl-3 pr-10 text-gray-900 ring-1 ring-inset ring-gray-300 focus:ring-2 focus:ring-primary-600 sm:text-sm sm:leading-6 disabled:bg-gray-100"
+-                    defaultValue="Select one"
+-                    value={currentWorkspace?.assistantModel}
+-                    onChange={(e) => {
+-                      updateSettings(workspaceId, {
+-                        assistantModel: e.target.value,
+-                      })
+-                    }}
+-                    disabled
++                <input
++                  id="assistant_model"
++                  name="assistant_model"
++                  type="text"
++                  placeholder="gpt-4o"
++                  className="block w-1/2 rounded-md border-0 py-1.5 px-3 text-gray-900 ring-1 ring-inset ring-gray-300 focus:ring-2 focus:ring-primary-600 sm:text-sm sm:leading-6"
++                  defaultValue={currentWorkspace?.assistantModel ?? ''}
++                  onBlur={(e) => {
++                    const v = e.target.value.trim()
++                    if (v && v !== currentWorkspace?.assistantModel) {
++                      updateSettings(workspaceId, { assistantModel: v })
++                    }
++                  }}
++                />
++              </div>
++            </div>
++
++            {/* AI API Base URL — OpenAI-compatible endpoint */}
++            <div className="space-y-8 border-b border-gray-900/10 pb-0 sm:space-y-0 sm:divide-y sm:divide-gray-900/10 ">
++              <div className="flex items-center justify-between sm:gap-4 sm:py-6">
++                <div className="flex flex-col gap-y-2 justify-left">
++                  <label
++                    htmlFor="assistant_base_url"
++                    className="block text-md font-medium leading-6 text-gray-900 sm:pt-1.5"
+                   >
+-                    <option value="gpt-4o">GPT-4o (Recommended)</option>
+-                  </select>
+-                </Tooltip>
++                    AI API Base URL
++                  </label>
++                  <span className="text-xs text-gray-400">
++                    Optional. Leave blank for OpenAI. Examples:
++                    https://api.deepseek.com/v1,
++                    https://dashscope.aliyuncs.com/compatible-mode/v1,
++                    http://host.docker.internal:11434/v1.
++                  </span>
++                </div>
++
++                <input
++                  id="assistant_base_url"
++                  name="assistant_base_url"
++                  type="text"
++                  placeholder="https://api.openai.com/v1"
++                  className="block w-1/2 rounded-md border-0 py-1.5 px-3 text-gray-900 ring-1 ring-inset ring-gray-300 focus:ring-2 focus:ring-primary-600 sm:text-sm sm:leading-6"
++                  defaultValue={currentWorkspace?.assistantApiBaseUrl ?? ''}
++                  onBlur={(e) => {
++                    const v = e.target.value.trim()
++                    if (v !== (currentWorkspace?.assistantApiBaseUrl ?? '')) {
++                      updateSettings(workspaceId, { assistantApiBaseUrl: v })
++                    }
++                  }}
++                />
+               </div>
+             </div>
+ 
+@@ -401,6 +430,81 @@ export default function SettingsPage() {
+                 </div>
+               </div>
+             )}
++
++            {/* AI connection test */}
++            <div className="space-y-8 pb-0 sm:space-y-0 sm:divide-y sm:divide-gray-900/10 ">
++              <div className="flex items-center justify-between sm:gap-4 sm:py-6">
++                <div className="flex flex-col gap-y-2 justify-left">
++                  <label className="block text-md font-medium leading-6 text-gray-900 sm:pt-1.5">
++                    Test AI connection
++                  </label>
++                  <span className="text-xs text-gray-400">
++                    Sends a 1-token chat completion to verify the
++                    Base URL + API key + Model combo works.
++                  </span>
++                </div>
++                <div className="w-1/2 flex items-center gap-x-3">
++                  <button
++                    type="button"
++                    disabled={state.testStatus === 'pending'}
++                    onClick={async () => {
++                      setState((s) => ({
++                        ...s,
++                        testStatus: 'pending',
++                        testMessage: '',
++                      }))
++                      try {
++                        const res = await fetch(
++                          `/api/v1/workspaces/${workspaceId}/ai-test`,
++                          { method: 'POST', credentials: 'include' }
++                        )
++                        const body = (await res.json().catch(() => ({}))) as {
++                          ok?: boolean
++                          message?: string
++                        }
++                        if (res.ok && body.ok) {
++                          setState((s) => ({
++                            ...s,
++                            testStatus: 'success',
++                            testMessage:
++                              body.message ?? 'AI endpoint reachable.',
++                          }))
++                        } else {
++                          setState((s) => ({
++                            ...s,
++                            testStatus: 'error',
++                            testMessage:
++                              body.message ?? `HTTP ${res.status}`,
++                          }))
++                        }
++                      } catch (err) {
++                        setState((s) => ({
++                          ...s,
++                          testStatus: 'error',
++                          testMessage:
++                            err instanceof Error ? err.message : String(err),
++                        }))
++                      }
++                    }}
++                    className="flex items-center justify-center px-4 py-2 border border-gray-200 text-xs rounded-sm shadow-sm text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 focus:outline-none"
++                  >
++                    {state.testStatus === 'pending' ? 'Testing…' : 'Test'}
++                  </button>
++                  {state.testStatus === 'success' && (
++                    <span className="flex items-center gap-x-1 text-xs text-green-700">
++                      <CheckCircleIcon className="h-4 w-4" />
++                      {state.testMessage}
++                    </span>
++                  )}
++                  {state.testStatus === 'error' && (
++                    <span className="flex items-center gap-x-1 text-xs text-red-700">
++                      <XCircleIcon className="h-4 w-4" />
++                      {state.testMessage}
++                    </span>
++                  )}
++                </div>
++              </div>
++            </div>
+           </div>
+         </div>
+       </div>
 diff --git a/docker/lazycat-entrypoint.sh b/docker/lazycat-entrypoint.sh
 new file mode 100755
 index 0000000..6168ff2
@@ -419,3 +760,69 @@ index 0000000..6168ff2
 +fi
 +
 +exec /usr/bin/supervisord -c /etc/supervisor/supervisord.conf
+diff --git a/packages/database/prisma/migrations/20260508120000_add_workspace_assistant_api_base_url/migration.sql b/packages/database/prisma/migrations/20260508120000_add_workspace_assistant_api_base_url/migration.sql
+new file mode 100644
+index 0000000..a82b30b
+--- /dev/null
++++ b/packages/database/prisma/migrations/20260508120000_add_workspace_assistant_api_base_url/migration.sql
+@@ -0,0 +1,2 @@
++-- AlterTable
++ALTER TABLE "Workspace" ADD COLUMN "assistantApiBaseUrl" TEXT;
+diff --git a/packages/database/prisma/schema.prisma b/packages/database/prisma/schema.prisma
+index 0411841..53e6f35 100644
+--- a/packages/database/prisma/schema.prisma
++++ b/packages/database/prisma/schema.prisma
+@@ -494,6 +494,7 @@ model Workspace {
+   ownerId        String   @db.Uuid
+   secretsId      String?  @unique @db.Uuid
+   assistantModel String   @default("gpt-4o")
++  assistantApiBaseUrl String?
+ 
+   createdAt DateTime @default(now())
+   updatedAt DateTime @default(now()) @updatedAt
+diff --git a/packages/database/src/workspaces.ts b/packages/database/src/workspaces.ts
+index feb148a..89363de 100644
+--- a/packages/database/src/workspaces.ts
++++ b/packages/database/src/workspaces.ts
+@@ -47,6 +47,7 @@ export async function getWorkspaceWithSecrets(workspaceId: string) {
+     },
+     select: {
+       assistantModel: true,
++      assistantApiBaseUrl: true,
+       secrets: {
+         select: {
+           openAiApiKey: true,
+@@ -85,6 +86,14 @@ export async function updateWorkspace(
+     data: {
+       name: data.name,
+       assistantModel: data.assistantModel,
++      // Empty string clears the override; undefined leaves the field
++      // alone so callers patching unrelated fields don't wipe it.
++      assistantApiBaseUrl:
++        data.assistantApiBaseUrl === undefined
++          ? undefined
++          : data.assistantApiBaseUrl === ''
++            ? null
++            : data.assistantApiBaseUrl,
+       secrets: {
+         upsert: {
+           update: {
+diff --git a/packages/types/src/index.ts b/packages/types/src/index.ts
+index aa96125..4766a0d 100644
+--- a/packages/types/src/index.ts
++++ b/packages/types/src/index.ts
+@@ -1195,12 +1195,14 @@ export type PivotTableSort =
+ const workspaceEditBase = z.object({
+   name: z.string().optional(),
+   assistantModel: z.string().optional(),
++  assistantApiBaseUrl: z.string().nullable().optional(),
+   openAiApiKey: z.string().optional(),
+ })
+ 
+ export const WorkspaceEditFormValues = z.union([
+   workspaceEditBase.extend({ name: z.string() }),
+   workspaceEditBase.extend({ assistantModel: z.string() }),
++  workspaceEditBase.extend({ assistantApiBaseUrl: z.string().nullable() }),
+   workspaceEditBase.extend({ openAiApiKey: z.string() }),
+ ])
+ 
