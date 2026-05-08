@@ -275,7 +275,7 @@ index 5a1cc50..f3f6716 100644
          )
      return llm
 diff --git a/apps/api/src/embedding.ts b/apps/api/src/embedding.ts
-index ae625d8..2146414 100644
+index ae625d8..d455580 100644
 --- a/apps/api/src/embedding.ts
 +++ b/apps/api/src/embedding.ts
 @@ -18,7 +18,14 @@ const BEDROCK_EMBEDDING_MODELS = [
@@ -287,7 +287,7 @@ index ae625d8..2146414 100644
 +// where users override the embedding model for a non-OpenAI endpoint),
 +// then the upstream default, then Bedrock.
 +const MODELS = [
-+  process.env.OPENAI_EMBEDDING_MODEL || OPENAI_EMBEDDING_MODEL,
++  process.env['OPENAI_EMBEDDING_MODEL'] || OPENAI_EMBEDDING_MODEL,
 +  OPENAI_EMBEDDING_MODEL,
 +  ...BEDROCK_EMBEDDING_MODELS,
 +]
@@ -304,9 +304,9 @@ index ae625d8..2146414 100644
 +  // SiliconFlow, Ollama, ...). Falls back to the SDK default
 +  // (https://api.openai.com/v1) when neither is set.
 +  const baseURL =
-+    process.env.OPENAI_BASE_URL || process.env.OPENAI_API_BASE || undefined
++    process.env['OPENAI_BASE_URL'] || process.env['OPENAI_API_BASE'] || undefined
 +  const embeddingModel =
-+    process.env.OPENAI_EMBEDDING_MODEL || OPENAI_EMBEDDING_MODEL
++    process.env['OPENAI_EMBEDDING_MODEL'] || OPENAI_EMBEDDING_MODEL
 +  const openai = new OpenAI({ apiKey: openAiApiKey, baseURL })
    const embeddingResponse = await openai.embeddings.create({
 -    model: OPENAI_EMBEDDING_MODEL,
