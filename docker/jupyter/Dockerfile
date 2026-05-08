@@ -1,11 +1,11 @@
 # Build context: vendor/briefer/apps/api
 #
-# Mirrors upstream apps/api/jupyter.Dockerfile but:
-# - bumps base from python:3.9-slim → python:3.10-slim-bookworm
-#   (3.9-slim now resolves to bookworm anyway, so we'd hit bookworm
-#   either way — explicit is clearer)
-# - renames libaio1 → libaio1t64 (debian bookworm rename;
-#   `apt-get install libaio1` fails with E: Unable to locate package)
+# Mirrors upstream apps/api/jupyter.Dockerfile but pins the base to
+# python:3.10-slim-bookworm. Upstream uses python:3.9-slim, which now
+# resolves to a debian trixie (13) image where libaio1 was renamed to
+# libaio1t64. Trixie also drops graphviz-dev variants we need; pinning
+# to bookworm explicit avoids both issues without changing the package
+# list.
 #
 # Everything else (Oracle Instant Client, jupyter_briefer_extension,
 # example-data) is identical to upstream so the runtime contract
@@ -31,7 +31,7 @@ RUN apt-get update && \
         libgdal-dev \
         curl \
         ca-certificates \
-        libaio1t64 \
+        libaio1 \
         alien \
         && rm -rf /var/lib/apt/lists/*
 
