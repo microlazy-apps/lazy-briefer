@@ -46,8 +46,8 @@ jobs:
           - name: jupyter
             dockerfile: docker/jupyter/Dockerfile
             context-override: vendor/briefer/apps/api
-            entrypoint: ""
-            entrypoint-dest: ""
+            entrypoint: docker/jupyter/lazycat-entrypoint.sh
+            entrypoint-dest: jupyter-entrypoint.sh
             patches: ""
           - name: ai
             dockerfile: docker/ai/Dockerfile
@@ -89,13 +89,14 @@ jobs:
             git apply "$p" -p1 --directory=vendor/briefer
           done
 
-      - name: Overlay lazycat entrypoint into vendor build context
+      - name: Overlay lazycat entrypoint into build context
         if: matrix.service.entrypoint != ''
         run: |
           set -euo pipefail
-          mkdir -p vendor/briefer/.lazycat-build
+          CTX="${{ matrix.service.context-override || 'vendor/briefer' }}"
+          mkdir -p "$CTX/.lazycat-build"
           cp "${{ matrix.service.entrypoint }}" \
-             "vendor/briefer/.lazycat-build/${{ matrix.service.entrypoint-dest }}"
+             "$CTX/.lazycat-build/${{ matrix.service.entrypoint-dest }}"
 
       - uses: docker/setup-buildx-action@v3
 

@@ -74,8 +74,10 @@ RUN useradd -m -d /home/jupyteruser jupyteruser && \
     groupadd -g 1001 briefer && usermod -aG briefer jupyteruser
 
 # lazycat entrypoint runs as root to chown the bind-mounted
-# /home/jupyteruser before dropping to jupyteruser via runuser.
-COPY --chmod=0755 lazycat-entrypoint.sh /usr/local/bin/lazycat-entrypoint.sh
+# /home/jupyteruser before dropping to jupyteruser via runuser. The
+# CI workflow stages it into <context>/.lazycat-build/ so this COPY
+# resolves regardless of where the build context root is.
+COPY --chmod=0755 .lazycat-build/jupyter-entrypoint.sh /usr/local/bin/lazycat-entrypoint.sh
 WORKDIR /home/jupyteruser
 ENTRYPOINT ["/usr/local/bin/lazycat-entrypoint.sh"]
 
