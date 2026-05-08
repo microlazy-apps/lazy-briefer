@@ -1,0 +1,421 @@
+diff --git a/Dockerfile b/Dockerfile
+new file mode 100644
+index 0000000..3cabb35
+--- /dev/null
++++ b/Dockerfile
+@@ -0,0 +1,246 @@
++FROM node:18-slim AS base
++
++RUN apt-get update && apt-get install -y \
++    python3.10 \
++    python3-pip \
++    python3-venv \
++    python3-dev \
++    postgresql \
++    postgresql-common \
++    postgresql-contrib \
++    nginx \
++    sudo \
++    xz-utils \
++    libpq-dev \
++    r-base \
++    graphviz \
++    libgraphviz-dev \
++    default-libmysqlclient-dev \
++    build-essential \
++    pkg-config \
++    jq \
++    git \
++    gdal-bin \
++    libgdal-dev \
++    curl \
++    supervisor \
++    libaio1 \
++    gcc \
++    alien && \
++    apt-get clean && rm -rf /var/lib/apt/lists/*
++
++# Set environment variable to skip the user prompt
++ENV DEBIAN_FRONTEND=noninteractive
++# Enable the PostgreSQL APT repository
++RUN /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
++# Install the pgvector extension for PostgreSQL
++RUN apt-get update && apt-get install -y postgresql-15-pgvector && \
++    apt-get clean && rm -rf /var/lib/apt/lists/*
++
++#### ORACLE INSTANT CLIENT ####
++ARG TARGETARCH
++
++RUN if [ "$TARGETARCH" = "arm64" ]; then \
++        # Download Oracle Instant Client RPM, convert to DEB, and install
++        curl -o /tmp/oracle-instantclient-basiclite.rpm https://download.oracle.com/otn_software/linux/instantclient/1924000/oracle-instantclient19.24-basiclite-19.24.0.0.0-1.aarch64.rpm && \
++        alien -i /tmp/oracle-instantclient-basiclite.rpm && \
++        rm /tmp/oracle-instantclient-basiclite.rpm; \
++    elif [ "$TARGETARCH" = "amd64" ]; then \
++        curl -o /tmp/oracle-instantclient-basiclite.rpm https://download.oracle.com/otn_software/linux/instantclient/2340000/oracle-instantclient-basic-23.4.0.24.05-1.el8.x86_64.rpm && \
++        alien -i /tmp/oracle-instantclient-basiclite.rpm && \
++        rm /tmp/oracle-instantclient-basiclite.rpm; \
++    else \
++        echo "Unsupported architecture: $TARGETARCH"; \
++        exit 1; \
++    fi
++
++# Set environment variables for Oracle Instant Client
++ENV LD_LIBRARY_PATH="/usr/lib/oracle/19.24/client64/lib:/usr/lib/oracle/23.4/client64/lib:${LD_LIBRARY_PATH}"
++ENV ORACLE_HOME="/usr/lib/oracle/19.24/client64:/usr/lib/oracle/23.4/client64"
++#### END OF ORACLE INSTANT CLIENT ####
++
++ENV TURBO_TELEMETRY_DISABLED=1
++
++##### START OF API BUILD #####
++FROM base AS api-builder
++
++WORKDIR /app
++RUN yarn global add turbo
++COPY . .
++RUN turbo prune @briefer/api --docker
++
++FROM base AS api-installer
++
++WORKDIR /app
++
++# First install dependencies (as they change less often)
++COPY .gitignore .gitignore
++COPY --from=api-builder /app/out/json/ .
++COPY --from=api-builder /app/out/yarn.lock ./yarn.lock
++RUN yarn install --network-timeout 1000000
++RUN yarn install
++
++# Build the project and its dependencies
++COPY --from=api-builder /app/out/full/ .
++COPY turbo.json turbo.json
++RUN yarn turbo run build --filter=@briefer/api...
++##### END OF API BUILD #####
++
++##### START OF WEB BUILD #####
++FROM base AS web-builder
++WORKDIR /app
++RUN yarn global add turbo
++COPY . .
++RUN turbo prune @briefer/web --docker
++
++FROM base AS web-installer
++WORKDIR /app
++
++# First install the dependencies (as they change less often)
++COPY .gitignore .gitignore
++COPY --from=web-builder /app/out/json/ .
++COPY --from=web-builder /app/out/yarn.lock ./yarn.lock
++RUN yarn install --network-timeout 1000000
++RUN yarn install --frozen-lockfile
++
++# Build the project
++COPY --from=web-builder /app/out/full/ .
++COPY turbo.json turbo.json
++
++ENV NEXT_PUBLIC_SINGLE_PROCESS=true
++
++ARG NEXT_PUBLIC_API_URL
++ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
++
++ARG NEXT_PUBLIC_API_WS_URL
++ENV NEXT_PUBLIC_API_WS_URL=$NEXT_PUBLIC_API_WS_URL
++
++ARG NEXT_PUBLIC_PUBLIC_URL
++ENV NEXT_PUBLIC_PUBLIC_URL=$NEXT_PUBLIC_PUBLIC_URL
++
++RUN yarn next telemetry disable
++RUN yarn turbo run build --filter=@briefer/web...
++##### END OF WEB BUILD #####
++
++FROM base AS runner
++
++##### START OF JUPYTER BUILD #####
++WORKDIR /app/jupyter
++ARG JUPYTER_REQUIREMENTS_FILE=apps/api/jupyter-requirements.txt
++COPY $JUPYTER_REQUIREMENTS_FILE ./requirements.txt
++
++# Set the GDAL version
++ENV CPLUS_INCLUDE_PATH=/usr/include/gdal
++ENV C_INCLUDE_PATH=/usr/include/gdal
++
++# Create a virtual environment and install Python packages inside it
++RUN python3 -m venv /app/jupyter/venv
++RUN /app/jupyter/venv/bin/pip install --upgrade pip
++RUN /app/jupyter/venv/bin/pip install --no-cache-dir jupyter_server
++RUN /app/jupyter/venv/bin/pip install --no-cache-dir ipykernel
++RUN /app/jupyter/venv/bin/pip install --no-cache-dir -r requirements.txt
++
++# jupyter extension
++COPY apps/api/jupyter_briefer_extension /usr/src/jupyter_briefer_extension
++RUN /app/jupyter/venv/bin/pip install /usr/src/jupyter_briefer_extension
++RUN /app/jupyter/venv/bin/jupyter server extension enable jupyter_briefer_extension --sys-prefix
++##### END OF JUPYTER BUILD #####
++
++### START OF AI SERVICE BUILD ###
++WORKDIR /app/ai
++
++COPY ai/. .
++
++RUN python3 -m venv /app/ai/venv
++RUN /app/ai/venv/bin/pip install --upgrade pip
++RUN /app/ai/venv/bin/pip install --no-cache-dir -r requirements.txt
++### END OF AI SERVICE BUILD ###
++
++WORKDIR /app
++
++RUN groupadd -r briefer \
++    && useradd -r -g briefer briefer \
++    && mkdir -p /home/briefer \
++    && mkdir -p /home/briefer/.config/briefer \
++    && chown -R briefer:briefer /home/briefer \
++    && chmod 700 /home/briefer \ 
++    && groupadd -r jupyteruser \
++    && useradd -r -g jupyteruser jupyteruser \
++    && mkdir -p /home/jupyteruser \
++    && chown -R jupyteruser:jupyteruser /home/jupyteruser \
++    && chown -R jupyteruser:jupyteruser /app/jupyter/venv \
++    && chmod 700 /home/jupyteruser
++
++#### START OF COPY API AND WEB BUILDS ####
++WORKDIR /app/api
++COPY --from=api-installer --chown=briefer:briefer /app .
++
++WORKDIR /app/web
++COPY --from=web-installer --chown=briefer:briefer /app/apps/web/next.config.js .
++COPY --from=web-installer --chown=briefer:briefer /app/apps/web/package.json .
++COPY --from=web-installer --chown=briefer:briefer /app/apps/web/.next/standalone ./
++COPY --from=web-installer --chown=briefer:briefer /app/apps/web/.next/static ./apps/web/.next/static
++COPY --from=web-installer --chown=briefer:briefer /app/apps/web/public ./apps/web/public
++COPY --from=web-installer --chown=briefer:briefer /app/apps/web/start.sh ./apps/web/start.sh
++##### END OF COPY API AND WEB BUILDS ####
++
++# NGINX
++RUN mkdir -p /var/log/nginx /etc/nginx /etc/nginx/conf.d
++COPY ./nginx/nginx.conf /etc/nginx/nginx.conf
++COPY ./docker/start-nginx.sh /app/start-nginx.sh
++RUN chmod +x /app/start-nginx.sh
++
++
++USER postgres
++RUN mkdir -p /var/lib/postgresql/data \
++    && chown -R postgres:postgres /var/lib/postgresql \
++    && /usr/lib/postgresql/15/bin/initdb -D /var/lib/postgresql/data
++
++USER briefer
++WORKDIR /app/setup
++RUN python3 -m venv /app/setup/venv
++RUN /app/setup/venv/bin/pip install --upgrade pip
++COPY docker/setup/requirements.txt requirements.txt
++RUN /app/setup/venv/bin/pip install -r requirements.txt
++COPY docker/setup/* .
++
++USER root
++RUN mkdir -p /var/log/supervisor
++COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
++
++COPY docker/init_db.sh /usr/local/bin/init_db.sh
++RUN chmod +x /usr/local/bin/init_db.sh
++
++# --- LAZYCAT BUILD-TIME SEEDS ---
++# Snapshot the freshly-initdb'd /var/lib/postgresql/data BEFORE we run
++# migrations so we have a baseline. Then bring up postgres, run
++# init_db.sh + CREATE EXTENSION vector + prisma migrate deploy, then
++# stop postgres and re-snapshot. The bigger snapshot (with all
++# migrations applied) becomes /opt/briefer/pg-seed and the lazycat
++# entrypoint copies it onto the empty bind-mounted data dir on first
++# boot so users skip the long migrate stretch.
++RUN set -eux; mkdir -p /opt/briefer; \
++    cp -a /home/jupyteruser /opt/briefer/jupyter-home-seed; \
++    chown -R postgres:postgres /var/lib/postgresql/data; \
++    su -s /bin/bash postgres -c \
++      "/usr/lib/postgresql/15/bin/pg_ctl -D /var/lib/postgresql/data -l /tmp/pg-seed.log -w start"; \
++    /usr/local/bin/init_db.sh; \
++    su -s /bin/bash postgres -c "psql -d briefer -c 'CREATE EXTENSION IF NOT EXISTS vector;'"; \
++    cd /app/api/packages/database && \
++      DATABASE_URL="postgresql://briefer:briefer@localhost:5432/briefer?schema=public" \
++      POSTGRES_PRISMA_URL="postgresql://briefer:briefer@localhost:5432/briefer?schema=public" \
++      npx --no-install prisma migrate deploy; \
++    su -s /bin/bash postgres -c \
++      "/usr/lib/postgresql/15/bin/pg_ctl -D /var/lib/postgresql/data -m fast -w stop"; \
++    cp -a /var/lib/postgresql/data /opt/briefer/pg-seed; \
++    chown -R postgres:postgres /opt/briefer/pg-seed
++
++# --- LAZYCAT ENTRYPOINT ---
++# Wraps the upstream supervisord CMD with bind-mount chowns, IPv6
++# localhost stripping, encryption-key length normalization, and
++# postgres / jupyter seed copies on first boot.
++COPY docker/lazycat-entrypoint.sh /lazycat-entrypoint.sh
++RUN chmod +x /lazycat-entrypoint.sh
++
++ENTRYPOINT []
++CMD ["/lazycat-entrypoint.sh"]
+diff --git a/ai/api/llms.py b/ai/api/llms.py
+index 5a1cc50..f3f6716 100644
+--- a/ai/api/llms.py
++++ b/ai/api/llms.py
+@@ -37,11 +37,18 @@ def initialize_llm(model_id=None, openai_api_key=None):
+             api_version=config("AZURE_API_VERSION", default=""),
+         )
+     else:
+-        # Initialize OpenAI using environment variables for API key and model name
++        # Initialize OpenAI using environment variables for API key and model name.
++        # Honor OPENAI_BASE_URL / OPENAI_API_BASE so self-hosted users
++        # can target any OpenAI-compatible endpoint.
++        base_url = config(
++            "OPENAI_BASE_URL",
++            default=config("OPENAI_API_BASE", default=None),
++        )
+         llm = ChatOpenAI(
+             temperature=0,
+             verbose=False,
+             openai_api_key=openai_api_key,
+             model_name=model_id if model_id else config("OPENAI_DEFAULT_MODEL_NAME"),
++            base_url=base_url,
+         )
+     return llm
+diff --git a/apps/api/src/embedding.ts b/apps/api/src/embedding.ts
+index ae625d8..2146414 100644
+--- a/apps/api/src/embedding.ts
++++ b/apps/api/src/embedding.ts
+@@ -18,7 +18,14 @@ const BEDROCK_EMBEDDING_MODELS = [
+   'amazon.titan-embed-text-v1',
+ ]
+ 
+-const MODELS = [OPENAI_EMBEDDING_MODEL, ...BEDROCK_EMBEDDING_MODELS]
++// Cache lookup tries the configured model first (covers the common case
++// where users override the embedding model for a non-OpenAI endpoint),
++// then the upstream default, then Bedrock.
++const MODELS = [
++  process.env.OPENAI_EMBEDDING_MODEL || OPENAI_EMBEDDING_MODEL,
++  OPENAI_EMBEDDING_MODEL,
++  ...BEDROCK_EMBEDDING_MODELS,
++]
+ 
+ export async function createEmbedding(
+   input: string,
+@@ -66,19 +73,27 @@ async function createEmbeddingFromOpenAI(
+   inputChecksum: string,
+   openAiApiKey: string
+ ): Promise<{ embedding: number[]; model: string }> {
+-  const openai = new OpenAI({ apiKey: openAiApiKey })
++  // Honor OPENAI_BASE_URL / OPENAI_API_BASE so self-hosters can point
++  // embeddings at any OpenAI-compatible endpoint (DeepSeek, Qwen,
++  // SiliconFlow, Ollama, ...). Falls back to the SDK default
++  // (https://api.openai.com/v1) when neither is set.
++  const baseURL =
++    process.env.OPENAI_BASE_URL || process.env.OPENAI_API_BASE || undefined
++  const embeddingModel =
++    process.env.OPENAI_EMBEDDING_MODEL || OPENAI_EMBEDDING_MODEL
++  const openai = new OpenAI({ apiKey: openAiApiKey, baseURL })
+   const embeddingResponse = await openai.embeddings.create({
+-    model: OPENAI_EMBEDDING_MODEL,
++    model: embeddingModel,
+     input,
+   })
+   const embedding = head(embeddingResponse.data)?.embedding
+   if (!embedding) {
+     throw new Error(
+-      `OpenAI(${OPENAI_EMBEDDING_MODEL}) did not return any embeddings`
++      `OpenAI(${embeddingModel}) did not return any embeddings`
+     )
+   }
+-  await persistEmbedding(inputChecksum, OPENAI_EMBEDDING_MODEL, embedding)
+-  return { embedding, model: OPENAI_EMBEDDING_MODEL }
++  await persistEmbedding(inputChecksum, embeddingModel, embedding)
++  return { embedding, model: embeddingModel }
+ }
+ 
+ async function persistEmbedding(
+diff --git a/docker/lazycat-entrypoint.sh b/docker/lazycat-entrypoint.sh
+new file mode 100755
+index 0000000..6168ff2
+--- /dev/null
++++ b/docker/lazycat-entrypoint.sh
+@@ -0,0 +1,86 @@
++#!/bin/bash
++# Lazycat entrypoint shim for briefer.
++#
++# Three things to handle before exec'ing supervisord:
++#
++# 1. Lazycat binds host paths in as root-owned, but supervisord
++#    launches each program under a non-root user. Re-own each bind
++#    to its expected owner. We chown only the top-level on already
++#    populated dirs to avoid expensive `chown -R` on a 5GB postgres
++#    cluster every reboot.
++# 2. The upstream image initdb's /var/lib/postgresql/data at build
++#    time, but bind-mounting an empty host dir on top hides that
++#    cluster. Detect the empty data dir via the PG_VERSION sentinel
++#    and seed it from the prebuilt /opt/briefer/pg-seed snapshot the
++#    Dockerfile created (which already has the briefer DB + role +
++#    pgvector extension + every prisma migration applied — saves the
++#    user 30-60s of first-boot wait).
++# 3. Same for /home/jupyteruser — the upstream image puts a python
++#    venv under there; bind-mounting an empty host dir hides it. Seed
++#    from /opt/briefer/jupyter-home-seed on first boot.
++
++set -euo pipefail
++
++# --- normalize encryption key lengths ---
++# Briefer uses AES-256-* via Node's createCipheriv, which requires a
++# 32-byte key (= 64 hex chars per upstream's setup.py default). LazyCat
++# `stable_secret` produces 128-hex-char (64-byte) values, so the api
++# crashes with `RangeError: Invalid key length` when adding a data
++# source. Truncate to 64 chars before exec'ing supervisord.
++for var in DATASOURCES_ENCRYPTION_KEY ENVIRONMENT_VARIABLES_ENCRYPTION_KEY WORKSPACE_SECRETS_ENCRYPTION_KEY; do
++  v="${!var-}"
++  if [ "${#v}" -gt 64 ]; then
++    export "$var"="${v:0:64}"
++  fi
++done
++
++# --- force IPv4 for `localhost` ---
++# Briefer's api process talks to jupyter via http://localhost:8888.
++# Node 18+ resolves `localhost` to ::1 first, but jupyter only binds
++# IPv4 0.0.0.0 → ECONNREFUSED ::1:8888 on every CSV upload / file
++# listing. Strip `localhost` from the IPv6 line so DNS returns only
++# 127.0.0.1.
++#
++# Note: docker mounts /etc/hosts as a bind, so `sed -i` (which uses
++# rename(2)) fails with EXDEV. Read into a shell variable, then
++# truncate-and-write the file in place.
++HOSTS_NEW=$(sed -E '/^::1[[:space:]]/{s/[[:space:]]+localhost([[:space:]]|$)/\1/g}' /etc/hosts)
++printf '%s\n' "$HOSTS_NEW" > /etc/hosts
++
++# --- bind ownership fixups (top-level only, fast) ---
++mkdir -p /var/lib/postgresql/data
++chown postgres:postgres /var/lib/postgresql/data
++chmod 700 /var/lib/postgresql/data
++
++mkdir -p /home/jupyteruser
++chown jupyteruser:jupyteruser /home/jupyteruser
++
++mkdir -p /home/briefer/.config/briefer
++chown -R briefer:briefer /home/briefer/.config
++
++# --- postgres data dir bootstrap ---
++# Use a pre-seeded snapshot if available (created at image build with
++# initdb + prisma migrate already done). Falls back to fresh initdb
++# for older images.
++if [ ! -s /var/lib/postgresql/data/PG_VERSION ]; then
++  if [ -d /opt/briefer/pg-seed ] && [ -s /opt/briefer/pg-seed/PG_VERSION ]; then
++    echo "[lazycat-entrypoint] seeding /var/lib/postgresql/data from prebuilt snapshot"
++    find /var/lib/postgresql/data -mindepth 1 -delete
++    cp -a /opt/briefer/pg-seed/. /var/lib/postgresql/data/
++    chown -R postgres:postgres /var/lib/postgresql/data
++  else
++    echo "[lazycat-entrypoint] empty data dir, no seed available — running initdb"
++    find /var/lib/postgresql/data -mindepth 1 -delete
++    su -s /bin/bash postgres -c \
++      "/usr/lib/postgresql/15/bin/initdb -D /var/lib/postgresql/data --auth=trust --encoding=UTF8 --locale=C.UTF-8"
++  fi
++fi
++
++# --- jupyter home dir bootstrap ---
++if [ -z "$(ls -A /home/jupyteruser 2>/dev/null)" ] && [ -d /opt/briefer/jupyter-home-seed ]; then
++  echo "[lazycat-entrypoint] seeding /home/jupyteruser from prebuilt snapshot"
++  cp -a /opt/briefer/jupyter-home-seed/. /home/jupyteruser/
++  chown -R jupyteruser:jupyteruser /home/jupyteruser
++fi
++
++exec /usr/bin/supervisord -c /etc/supervisor/supervisord.conf

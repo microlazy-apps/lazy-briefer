@@ -24,7 +24,8 @@ jobs:
     uses: microlazy-apps/lazycat-ci/.github/workflows/lpk-build.yml@v0.1.0
     with:
       version:        ${{ needs.prep.outputs.version }}
-      docker-context: ./docker
+      docker-context: ./vendor/briefer
+      patches-target: vendor/briefer
     secrets: inherit
 
   publish:
