@@ -494,6 +494,30 @@ index ae625d8..a223e24 100644
  }
  
  async function persistEmbedding(
+diff --git a/apps/api/src/python/query/sqlalchemy.ts b/apps/api/src/python/query/sqlalchemy.ts
+index 06b4207..f9482f8 100644
+--- a/apps/api/src/python/query/sqlalchemy.ts
++++ b/apps/api/src/python/query/sqlalchemy.ts
+@@ -299,12 +299,16 @@ def briefer_make_sqlalchemy_query():
+ 
+     if datasource_type == "psql":
+         try:
+-            # set timeout of queries to 10 minutes
++            # set timeout of queries to 10 minutes;
++            # force client_encoding=UTF8 so non-ASCII (Chinese, emoji, ...)
++            # rows from servers configured with SQL_ASCII / LATIN1 still
++            # come back as proper utf-8 strings instead of triggering
++            # 'ascii codec can't decode byte ...' downstream.
+             engine = create_engine(${JSON.stringify(
+               databaseUrl
+-            )}, connect_args={"options": "-c statement_timeout=600000"})
++            )}, client_encoding="utf8", connect_args={"options": "-c statement_timeout=600000 -c client_encoding=UTF8"})
+         except:
+-            engine = create_engine(${JSON.stringify(databaseUrl)})
++            engine = create_engine(${JSON.stringify(databaseUrl)}, client_encoding="utf8")
+     else:
+         engine = create_engine(${JSON.stringify(databaseUrl)})
+ 
 diff --git a/apps/api/src/v1/workspaces/workspace/index.ts b/apps/api/src/v1/workspaces/workspace/index.ts
 index f861062..8590977 100644
 --- a/apps/api/src/v1/workspaces/workspace/index.ts
