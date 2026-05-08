@@ -8,7 +8,10 @@ application:
   health_check:
     test_url: http://main:3000/
     timeout: 10s
-    start_period: 180s
+    # First boot does initdb + ~50 prisma migrations + Jupyter venv +
+    # AI venv warm-up. 10 min start_period prevents lazycat from
+    # erroring out and killing the container mid-init.
+    start_period: 600s
 
 services:
   main:
@@ -45,4 +48,6 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 180s
+      # Match the application-level start_period so docker's own
+      # healthcheck does not flap during the long first boot.
+      start_period: 600s
