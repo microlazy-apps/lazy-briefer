@@ -27,6 +27,18 @@ if [ ! -s /var/lib/postgresql/data/PG_VERSION ]; then
   fi
 fi
 
+# Force listen_addresses='*' so sibling services (api, ...) on the
+# lazycat compose network can reach us. The seed snapshot was created
+# locally during build with the default 'localhost' setting baked in,
+# which would refuse all non-loopback connections at runtime.
+if [ -s /var/lib/postgresql/data/postgresql.conf ]; then
+  if grep -qE "^[[:space:]]*listen_addresses" /var/lib/postgresql/data/postgresql.conf; then
+    sed -i "s|^[[:space:]]*listen_addresses.*|listen_addresses = '*'|" /var/lib/postgresql/data/postgresql.conf
+  else
+    echo "listen_addresses = '*'" >> /var/lib/postgresql/data/postgresql.conf
+  fi
+fi
+
 # Hand off to the upstream postgres entrypoint (handles initdb if
 # data dir still empty, runs /docker-entrypoint-initdb.d/*, exec's
 # postgres).
