@@ -21,6 +21,19 @@
 
 set -euo pipefail
 
+# --- normalize encryption key lengths ---
+# Briefer uses AES-256-* via Node's createCipheriv, which requires a
+# 32-byte key (= 64 hex chars per upstream's setup.py default). LazyCat
+# `stable_secret` produces 128-hex-char (64-byte) values, so the api
+# crashes with `RangeError: Invalid key length` when adding a data
+# source. Truncate to 64 chars before exec'ing supervisord.
+for var in DATASOURCES_ENCRYPTION_KEY ENVIRONMENT_VARIABLES_ENCRYPTION_KEY WORKSPACE_SECRETS_ENCRYPTION_KEY; do
+  v="${!var-}"
+  if [ "${#v}" -gt 64 ]; then
+    export "$var"="${v:0:64}"
+  fi
+done
+
 # --- force IPv4 for `localhost` ---
 # Briefer's api process talks to jupyter via http://localhost:8888.
 # Node 18+ resolves `localhost` to ::1 first, but jupyter only binds
