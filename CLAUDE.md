@@ -187,3 +187,81 @@ git apply --check patches/01-lazycat-base-url-and-shim.patch -p1 --directory=ven
   testing `cp -a /opt/briefer/pg-seed → bind dir` on slow disks.
 - **Workspace's `assistantApiBaseUrl` UI uses `onBlur` to save**.
   Users have to click off the field to commit.
+
+---
+
+## PLAN: split single image into 6 services (TODO — delete this section after done)
+
+**Why:** the current single ~2.5GB image is slow to pull on first
+install and forces a full rebuild for any patch (15+ min build for a
+1-line web change). Splitting lets LazyCat pull services in parallel
+and only the changed service rebuilds.
+
+### Target services
+
+| service | image | build / patch |
+|---|---|---|
+| `postgres-seed` | our build, base `pgvector/pgvector:pg16` | RUN initdb + init_db.sh + prisma migrate deploy snapshot at build time; entrypoint copies seed → bind on first boot |
+| `jupyter` | `briefercloud/briefer-jupyter@sha256:…` | retag (no patch needed) |
+| `ai` | our build of `vendor/briefer/ai/` | apply `patches/ai/*` (llms.py + app.py) |
+| `api` | our build of `vendor/briefer/apps/api/…` | apply `patches/api/*` (embedding.ts, ai-api.ts, sql.ts, structure.ts, workspaces.ts, sqlalchemy.ts, types/index.ts, schema.prisma + migration, /ai-test endpoint) |
+| `web` | our build of `vendor/briefer/apps/web/…` | apply `patches/web/*` (settings UI: model input + base_url + Test) |
+| `main` (nginx) | `nginx:1.27` + bind `nginx.conf` from lazycat dir, or tiny our-build with COPY | upstream nginx.conf already targets `web:4000` + `api:8080` |
+
+### Must preserve from current single-image build
+
+1. **Build-time prisma migrate seed.** The whole point of `pg-seed`
+   image is to keep first-boot fast: image already contains
+   `/var/lib/postgresql/data` with all migrations applied. Lift this
+   out of the giant Dockerfile into a small Dockerfile under
+   `docker/postgres-seed/`. Entrypoint stays `cp -a /opt/briefer/pg-seed
+   /var/lib/postgresql/data` when `PG_VERSION` missing.
+2. **Entrypoint shims** for ownership chowns / IPv6 `/etc/hosts` /
+   encryption-key truncation / PYTHONUTF8 — port to each service that
+   needs it (postgres-seed: chown only; api/ai/web: just env).
+3. **Workspace AI Base URL + free-text model + Test button** patches
+   (api + web).
+4. **psql `client_encoding=utf8`** patch in api.
+5. **Embedding fallback to null** patch in api.
+
+### Workflow changes
+
+- `release.yml`: build a matrix of services. Each pushes to
+  `ghcr.io/microlazy-apps/lazy-briefer-<svc>:<tag>` with consistent
+  version tag. `lazycat-ci/lpk-build.yml@v0.1.0` only handles 1 image
+  — likely need a custom job that loops `docker buildx` per service,
+  then a single lpk-build (or copy-image) call per image.
+- `patches/` split into per-service subdirs:
+  ```
+  patches/
+    postgres-seed/  Dockerfile + lazycat-entrypoint.sh
+    api/            01-base-url.patch, 02-embedding-fallback.patch, 03-utf8-engine.patch, 04-ai-test.patch
+    web/            01-settings-ui.patch
+    ai/             01-base-url.patch
+  ```
+- `lazycat/lzc-manifest.template.yml`: 6 services + internal DNS
+  (lazycat compose default network). `application.upstreams` points at
+  `main:3000`. Other services exposed via service name only.
+- secrets: each api / ai service inherits LOGIN_JWT_SECRET /
+  AUTH_JWT_SECRET / *_ENCRYPTION_KEY / JUPYTER_TOKEN /
+  AI_BASIC_AUTH_* from the manifest env block. Postgres only needs
+  POSTGRES_USERNAME/PASSWORD via stable_secret.
+
+### Open questions to resolve before starting
+
+- [ ] Does `lazycat-ci/lpk-build.yml@v0.1.0` support multi-image
+      build? If not, write a custom release.yml that uses
+      `docker/build-push-action` directly and only delegates the lpk
+      packaging step.
+- [ ] Does lazycat manifest support `depends_on:
+      condition: service_healthy` for ordering postgres-seed before
+      others? Verify in `sub2api` repo.
+- [ ] Single tag scheme: bump one VERSION → all 6 image tags identical.
+
+### Cleanup after merge
+
+- delete this PLAN section
+- replace the "Architecture" / "Known gotchas (single image)" parts
+  of README + this CLAUDE.md with the new layout
+- delete `vendor/briefer/Dockerfile` (vendor root duplicate of upstream
+  docker/Dockerfile) — no longer needed
