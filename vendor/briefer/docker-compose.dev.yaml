@@ -1,0 +1,78 @@
+services:
+  postgres:
+    build:
+      context: dev/postgresql
+      dockerfile: Dockerfile
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_DB: 'briefer'
+      POSTGRES_USER: 'postgres'
+      POSTGRES_PASSWORD: 'password'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d briefer || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+
+  db_migration:
+    build:
+      context: '.'
+      dockerfile: 'apps/api/Dockerfile'
+    working_dir: '/app/packages/database'
+    command: ['npx', 'prisma', 'migrate', 'deploy']
+    environment:
+      NODE_ENV: 'development'
+      POSTGRES_PRISMA_URL: 'postgresql://postgres:password@postgres:5432/briefer?schema=public'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  jupyter_server:
+    labels:
+      'cloud.briefer.jupyter-container': 'true'
+    build:
+      context: 'apps/api'
+      dockerfile: 'jupyter.Dockerfile'
+    command:
+      - 'sh'
+      - '-c'
+      - 'jupyter server --ip=0.0.0.0 --ZMQChannelsWebsocketConnection.iopub_data_rate_limit=1.0e10 --ZMQChannelsWebsocketConnection.iopub_msg_rate_limit=1.0e6 --ServerApp.max_body_size=107374182400'
+    ports:
+      - '8888:8888'
+    environment:
+      # Use passed value
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN:?error}
+    volumes:
+      - ./jupyterfiles:/home/jupyteruser
+    restart: always
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -f http://localhost:8888/api || exit 1']
+      interval: 5s
+      timeout: 10s
+      retries: 5
+
+  ecommerce:
+    build: data/psql/ecommerce
+    restart: always
+    ports:
+      - '5433:5432'
+    environment:
+      POSTGRES_DB: 'ecommerce'
+      POSTGRES_USER: 'postgres'
+      POSTGRES_PASSWORD: 'password'
+    volumes:
+      - ecommerce_data:/var/lib/postgresql/data
+
+  haproxy:
+    image: haproxy:3.0
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - '8080:8080'
+
+volumes:
+  postgres_dev_data:
+  ecommerce_data:
