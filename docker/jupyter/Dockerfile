@@ -73,7 +73,10 @@ COPY ./example-data/ /usr/src/example-data
 RUN useradd -m -d /home/jupyteruser jupyteruser && \
     groupadd -g 1001 briefer && usermod -aG briefer jupyteruser
 
-USER jupyteruser
+# lazycat entrypoint runs as root to chown the bind-mounted
+# /home/jupyteruser before dropping to jupyteruser via runuser.
+COPY --chmod=0755 lazycat-entrypoint.sh /usr/local/bin/lazycat-entrypoint.sh
 WORKDIR /home/jupyteruser
+ENTRYPOINT ["/usr/local/bin/lazycat-entrypoint.sh"]
 
 EXPOSE 8888

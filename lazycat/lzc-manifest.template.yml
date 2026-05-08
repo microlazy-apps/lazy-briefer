@@ -99,6 +99,10 @@ services:
       - TZ=Asia/Shanghai
       - NODE_ENV=production
       - LOG_LEVEL=info
+      # lazycat docker network is dual-stack; Node 18 axios/undici
+      # prefers IPv6 by default → ECONNREFUSED on services that only
+      # listen v4 (postgres pgvector image, jupyter, ai). Force v4-first.
+      - NODE_OPTIONS=--dns-result-order=ipv4first
       - PYTHONUTF8=1
       - PYTHONIOENCODING=utf-8
       - LANG=C.UTF-8
