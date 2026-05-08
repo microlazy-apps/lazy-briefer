@@ -45,6 +45,13 @@ services:
       - ENVIRONMENT_VARIABLES_ENCRYPTION_KEY={{stable_secret "BRIEFER_ENV_VARS_KEY"}}
       - WORKSPACE_SECRETS_ENCRYPTION_KEY={{stable_secret "BRIEFER_WORKSPACE_KEY"}}
       - DATASOURCES_ENCRYPTION_KEY={{stable_secret "BRIEFER_DATASOURCES_KEY"}}
+
+      # Prisma connection pool. Default (10 / 5s) gets exhausted as soon
+      # as the schema explorer crawls a real data source — every worker
+      # competes with internal lock-extension queries. Bump to a value
+      # that survives ~30 concurrent schema queries.
+      - POSTGRES_CONNECTION_LIMIT=50
+      - POSTGRES_POOL_TIMEOUT=30
     binds:
       # postgres data — pgvector tables, app metadata
       - /lzcapp/var/persist/postgres:/var/lib/postgresql/data
