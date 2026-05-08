@@ -1,0 +1,218 @@
+name: lpk-multi-build
+
+# Reusable workflow that builds 6 service images, copies them to the
+# lazycat registry, renders manifest with per-service image URLs,
+# and uploads the .lpk as the "lpk" artifact.
+#
+# Lift-and-shift of microlazy-apps/lazycat-ci/lpk-build.yml@v0.1.0
+# but extended for the multi-service split. Stays local to lazy-briefer
+# so we don't have to upstream a v0.2.0 of lazycat-ci to ship the
+# split.
+#
+# Caller must:
+#   - provide secrets: LAZYCAT_USERNAME, LAZYCAT_PASSWORD
+#   - declare top-level permissions: contents: read, packages: write
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Semver to embed in package.yml + tag images"
+        type: string
+        required: true
+      runner-label:
+        description: "Self-hosted runner label (must have lzc-cli)"
+        type: string
+        default: "xiaomoru"
+
+env:
+  GHCR: ghcr.io/${{ github.repository }}
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - name: postgres-seed
+            dockerfile: docker/postgres-seed/Dockerfile
+            entrypoint: docker/postgres-seed/lazycat-entrypoint.sh
+            entrypoint-dest: postgres-seed-entrypoint.sh
+            patches: ""
+          - name: jupyter
+            dockerfile: vendor/briefer/apps/api/jupyter.Dockerfile
+            context-override: vendor/briefer/apps/api
+            entrypoint: ""
+            entrypoint-dest: ""
+            patches: ""
+          - name: ai
+            dockerfile: docker/ai/Dockerfile
+            entrypoint: ""
+            entrypoint-dest: ""
+            patches: patches/ai
+          - name: api
+            dockerfile: docker/api/Dockerfile
+            entrypoint: docker/api/lazycat-entrypoint.sh
+            entrypoint-dest: api-entrypoint.sh
+            patches: patches/api
+          - name: web
+            dockerfile: docker/web/Dockerfile
+            entrypoint: ""
+            entrypoint-dest: ""
+            patches: patches/web
+          - name: main
+            dockerfile: docker/main/Dockerfile
+            entrypoint: ""
+            entrypoint-dest: ""
+            patches: ""
+    outputs:
+      digest-postgres-seed: ${{ steps.collect.outputs.digest-postgres-seed }}
+      digest-jupyter: ${{ steps.collect.outputs.digest-jupyter }}
+      digest-ai: ${{ steps.collect.outputs.digest-ai }}
+      digest-api: ${{ steps.collect.outputs.digest-api }}
+      digest-web: ${{ steps.collect.outputs.digest-web }}
+      digest-main: ${{ steps.collect.outputs.digest-main }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply per-service patches
+        if: matrix.service.patches != ''
+        run: |
+          set -euo pipefail
+          for p in ${{ matrix.service.patches }}/*.patch; do
+            [ -f "$p" ] || continue
+            echo "==> applying $p"
+            git apply "$p" -p1 --directory=vendor/briefer
+          done
+
+      - name: Overlay lazycat entrypoint into vendor build context
+        if: matrix.service.entrypoint != ''
+        run: |
+          set -euo pipefail
+          mkdir -p vendor/briefer/.lazycat-build
+          cp "${{ matrix.service.entrypoint }}" \
+             "vendor/briefer/.lazycat-build/${{ matrix.service.entrypoint-dest }}"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.GHCR }}/${{ matrix.service.name }}
+          tags: |
+            type=sha,format=long
+            type=semver,pattern={{version}},value=${{ inputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.version }}
+            type=raw,value=latest
+
+      - uses: docker/build-push-action@v6
+        id: push
+        with:
+          context: ${{ matrix.service.context-override || 'vendor/briefer' }}
+          file: ${{ matrix.service.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service.name }}
+
+      - id: collect
+        run: |
+          echo "digest-${{ matrix.service.name }}=${{ steps.push.outputs.digest }}" \
+            >> "$GITHUB_OUTPUT"
+
+  package:
+    needs: docker
+    runs-on: [self-hosted, "${{ inputs.runner-label }}"]
+    outputs:
+      lpk-name: ${{ steps.find.outputs.name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lazycat appstore login
+        env:
+          LAZYCAT_USERNAME: ${{ secrets.LAZYCAT_USERNAME }}
+          LAZYCAT_PASSWORD: ${{ secrets.LAZYCAT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          TOKEN=$(curl -fsS -X POST https://account.lazycat.cloud/api/login/signin \
+            --data-urlencode "username=${LAZYCAT_USERNAME}" \
+            --data-urlencode "password=${LAZYCAT_PASSWORD}" \
+            | jq -r '.data.token')
+          [ -n "${TOKEN}" ] && [ "${TOKEN}" != "null" ] || { echo "::error::login failed"; exit 1; }
+          echo "::add-mask::${TOKEN}"
+          echo "LZC_CLI_TOKEN=${TOKEN}" >> "${GITHUB_ENV}"
+
+      - name: Copy ghcr images to lazycat registry
+        env:
+          GHCR_LC: ${{ env.GHCR }}
+          DIGEST_POSTGRES_SEED: ${{ needs.docker.outputs.digest-postgres-seed }}
+          DIGEST_JUPYTER:       ${{ needs.docker.outputs.digest-jupyter }}
+          DIGEST_AI:            ${{ needs.docker.outputs.digest-ai }}
+          DIGEST_API:           ${{ needs.docker.outputs.digest-api }}
+          DIGEST_WEB:           ${{ needs.docker.outputs.digest-web }}
+          DIGEST_MAIN:          ${{ needs.docker.outputs.digest-main }}
+        run: |
+          set -euo pipefail
+          REPO_LC="${GHCR_LC,,}"
+          copy() {
+            local svc="$1" digest="$2" envvar="$3"
+            local src="${REPO_LC}/${svc}@${digest}"
+            echo "==> copying ${src}"
+            local img
+            img=$(lzc-cli appstore copy-image "${src}" --trace-level quiet)
+            [ -n "${img}" ] || { echo "::error::copy-image returned empty for ${svc}"; exit 1; }
+            echo "    -> ${img}"
+            echo "${envvar}=${img}" >> "${GITHUB_ENV}"
+          }
+          copy postgres-seed "${DIGEST_POSTGRES_SEED}" LAZYCAT_IMAGE_POSTGRES_SEED
+          copy jupyter       "${DIGEST_JUPYTER}"       LAZYCAT_IMAGE_JUPYTER
+          copy ai            "${DIGEST_AI}"            LAZYCAT_IMAGE_AI
+          copy api           "${DIGEST_API}"           LAZYCAT_IMAGE_API
+          copy web           "${DIGEST_WEB}"           LAZYCAT_IMAGE_WEB
+          copy main          "${DIGEST_MAIN}"          LAZYCAT_IMAGE_MAIN
+
+      - name: Render manifest + package templates
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          envsubst '${VERSION}' \
+            < lazycat/package.template.yml \
+            > lazycat/package.yml
+          envsubst '${LAZYCAT_IMAGE_POSTGRES_SEED} ${LAZYCAT_IMAGE_JUPYTER} ${LAZYCAT_IMAGE_AI} ${LAZYCAT_IMAGE_API} ${LAZYCAT_IMAGE_WEB} ${LAZYCAT_IMAGE_MAIN}' \
+            < lazycat/lzc-manifest.template.yml \
+            > lazycat/lzc-manifest.yml
+          echo "==> rendered package.yml head"
+          head -n 5 lazycat/package.yml
+          echo "==> rendered lzc-manifest.yml image lines"
+          grep '    image:' lazycat/lzc-manifest.yml || true
+
+      - name: lzc-cli project build
+        run: |
+          set -euo pipefail
+          ( cd lazycat && lzc-cli project build )
+          ls -lh lazycat/*.lpk
+
+      - id: find
+        run: |
+          set -euo pipefail
+          LPK=$(ls -t lazycat/*.lpk | head -1)
+          echo "name=$(basename "$LPK")" >> "${GITHUB_OUTPUT}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lpk
+          path: lazycat/*.lpk
+          retention-days: 14
+          if-no-files-found: error

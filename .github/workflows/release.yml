@@ -21,11 +21,9 @@ jobs:
 
   build:
     needs: prep
-    uses: microlazy-apps/lazycat-ci/.github/workflows/lpk-build.yml@v0.1.0
+    uses: ./.github/workflows/lpk-multi-build.yml
     with:
-      version:        ${{ needs.prep.outputs.version }}
-      docker-context: ./vendor/briefer
-      patches-target: vendor/briefer
+      version: ${{ needs.prep.outputs.version }}
     secrets: inherit
 
   publish:

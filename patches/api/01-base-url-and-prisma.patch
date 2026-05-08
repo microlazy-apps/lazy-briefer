@@ -1,0 +1,404 @@
+diff --git a/apps/api/src/ai-api.ts b/apps/api/src/ai-api.ts
+index 31e99ef..6bcb4d4 100644
+--- a/apps/api/src/ai-api.ts
++++ b/apps/api/src/ai-api.ts
+@@ -17,7 +17,8 @@ export async function sqlEditStreamed(
+   onSQL: (sql: string) => void,
+   tableInfo: string | null,
+   modelId: string | null,
+-  openaiApiKey: string | null
++  openaiApiKey: string | null,
++  openaiApiBase: string | null = null
+ ): Promise<{
+   promise: Promise<void>
+   abortController: AbortController
+@@ -34,6 +35,7 @@ export async function sqlEditStreamed(
+       openaiApiKey: openaiApiKey
+         ? decrypt(openaiApiKey, config().WORKSPACE_SECRETS_ENCRYPTION_KEY)
+         : null,
++      openaiApiBase,
+     },
+     {
+       headers: {
+@@ -126,7 +128,8 @@ export async function pythonEditStreamed(
+   dataFrames: DataFrame[],
+   onSource: (source: string) => void,
+   modelId: string | null,
+-  openaiApiKey: string | null
++  openaiApiKey: string | null,
++  openaiApiBase: string | null = null
+ ): Promise<{
+   promise: Promise<void>
+   abortController: AbortController
+@@ -149,6 +152,7 @@ export async function pythonEditStreamed(
+       openaiApiKey: openaiApiKey
+         ? decrypt(openaiApiKey, config().WORKSPACE_SECRETS_ENCRYPTION_KEY)
+         : null,
++      openaiApiBase,
+     },
+     {
+       headers: {
+diff --git a/apps/api/src/datasources/structure.ts b/apps/api/src/datasources/structure.ts
+index 39bc543..a41a847 100644
+--- a/apps/api/src/datasources/structure.ts
++++ b/apps/api/src/datasources/structure.ts
+@@ -353,6 +353,7 @@ async function _refreshDataSourceStructure(
+   } else {
+     openAiApiKey = config().OPENAI_API_KEY
+   }
++  const apiBaseUrl = workspace.assistantApiBaseUrl ?? null
+ 
+   const updateQueue = new PQueue({ concurrency: 1 })
+   const tables: { schema: string; table: string }[] = []
+@@ -367,7 +368,7 @@ async function _refreshDataSourceStructure(
+         ddl += `  ${c.name} ${c.type}\n`
+       }
+       try {
+-        embeddingResult = await createEmbedding(ddl, openAiApiKey)
++        embeddingResult = await createEmbedding(ddl, openAiApiKey, apiBaseUrl)
+       } catch (err) {
+         logger().error(
+           {
+diff --git a/apps/api/src/embedding.ts b/apps/api/src/embedding.ts
+index ae625d8..a223e24 100644
+--- a/apps/api/src/embedding.ts
++++ b/apps/api/src/embedding.ts
+@@ -18,11 +18,19 @@ const BEDROCK_EMBEDDING_MODELS = [
+   'amazon.titan-embed-text-v1',
+ ]
+ 
+-const MODELS = [OPENAI_EMBEDDING_MODEL, ...BEDROCK_EMBEDDING_MODELS]
++// Cache lookup tries the configured model first (covers the common case
++// where users override the embedding model for a non-OpenAI endpoint),
++// then the upstream default, then Bedrock.
++const MODELS = [
++  process.env['OPENAI_EMBEDDING_MODEL'] || OPENAI_EMBEDDING_MODEL,
++  OPENAI_EMBEDDING_MODEL,
++  ...BEDROCK_EMBEDDING_MODELS,
++]
+ 
+ export async function createEmbedding(
+   input: string,
+-  openAiApiKey: string | null
++  openAiApiKey: string | null,
++  apiBaseUrl?: string | null
+ ): Promise<{ embedding: number[]; model: string } | null> {
+   const inputChecksum = createHash('sha256').update(input).digest('hex')
+   for (const model of MODELS) {
+@@ -49,36 +57,69 @@ export async function createEmbedding(
+   }
+ 
+   if (openAiApiKey) {
+-    const result = await createEmbeddingFromOpenAI(
+-      input,
+-      inputChecksum,
+-      openAiApiKey
+-    )
+-    return result
++    try {
++      const result = await createEmbeddingFromOpenAI(
++        input,
++        inputChecksum,
++        openAiApiKey,
++        apiBaseUrl ?? null
++      )
++      return result
++    } catch (err) {
++      // Many OpenAI-compatible providers (DeepSeek, Qwen-DashScope, ...)
++      // don't expose /v1/embeddings, so 404 / network errors are common
++      // when the workspace is pointed at one. Log and let the caller
++      // fall back (full-schema tableInfo, no embedding cache write).
++      logger().warn(
++        { err },
++        'OpenAI-compatible embedding endpoint failed; returning null'
++      )
++      return null
++    }
+   }
+ 
+-  const embedding = await createEmbeddingFromBedrock(input, inputChecksum)
+-  return embedding
++  try {
++    const embedding = await createEmbeddingFromBedrock(input, inputChecksum)
++    return embedding
++  } catch (err) {
++    logger().warn(
++      { err },
++      'Bedrock embedding fallback also failed; returning null'
++    )
++    return null
++  }
+ }
+ 
+ async function createEmbeddingFromOpenAI(
+   input: string,
+   inputChecksum: string,
+-  openAiApiKey: string
++  openAiApiKey: string,
++  apiBaseUrl: string | null
+ ): Promise<{ embedding: number[]; model: string }> {
+-  const openai = new OpenAI({ apiKey: openAiApiKey })
++  // Resolution order for the OpenAI base URL:
++  //   1. per-workspace setting (apiBaseUrl arg)
++  //   2. OPENAI_BASE_URL / OPENAI_API_BASE env (container default)
++  //   3. SDK default (https://api.openai.com/v1)
++  const baseURL =
++    apiBaseUrl ||
++    process.env['OPENAI_BASE_URL'] ||
++    process.env['OPENAI_API_BASE'] ||
++    undefined
++  const embeddingModel =
++    process.env['OPENAI_EMBEDDING_MODEL'] || OPENAI_EMBEDDING_MODEL
++  const openai = new OpenAI({ apiKey: openAiApiKey, baseURL })
+   const embeddingResponse = await openai.embeddings.create({
+-    model: OPENAI_EMBEDDING_MODEL,
++    model: embeddingModel,
+     input,
+   })
+   const embedding = head(embeddingResponse.data)?.embedding
+   if (!embedding) {
+     throw new Error(
+-      `OpenAI(${OPENAI_EMBEDDING_MODEL}) did not return any embeddings`
++      `OpenAI(${embeddingModel}) did not return any embeddings`
+     )
+   }
+-  await persistEmbedding(inputChecksum, OPENAI_EMBEDDING_MODEL, embedding)
+-  return { embedding, model: OPENAI_EMBEDDING_MODEL }
++  await persistEmbedding(inputChecksum, embeddingModel, embedding)
++  return { embedding, model: embeddingModel }
+ }
+ 
+ async function persistEmbedding(
+diff --git a/apps/api/src/python/query/sqlalchemy.ts b/apps/api/src/python/query/sqlalchemy.ts
+index 06b4207..f9482f8 100644
+--- a/apps/api/src/python/query/sqlalchemy.ts
++++ b/apps/api/src/python/query/sqlalchemy.ts
+@@ -299,12 +299,16 @@ def briefer_make_sqlalchemy_query():
+ 
+     if datasource_type == "psql":
+         try:
+-            # set timeout of queries to 10 minutes
++            # set timeout of queries to 10 minutes;
++            # force client_encoding=UTF8 so non-ASCII (Chinese, emoji, ...)
++            # rows from servers configured with SQL_ASCII / LATIN1 still
++            # come back as proper utf-8 strings instead of triggering
++            # 'ascii codec can't decode byte ...' downstream.
+             engine = create_engine(${JSON.stringify(
+               databaseUrl
+-            )}, connect_args={"options": "-c statement_timeout=600000"})
++            )}, client_encoding="utf8", connect_args={"options": "-c statement_timeout=600000 -c client_encoding=UTF8"})
+         except:
+-            engine = create_engine(${JSON.stringify(databaseUrl)})
++            engine = create_engine(${JSON.stringify(databaseUrl)}, client_encoding="utf8")
+     else:
+         engine = create_engine(${JSON.stringify(databaseUrl)})
+ 
+diff --git a/apps/api/src/v1/workspaces/workspace/index.ts b/apps/api/src/v1/workspaces/workspace/index.ts
+index f861062..8590977 100644
+--- a/apps/api/src/v1/workspaces/workspace/index.ts
++++ b/apps/api/src/v1/workspaces/workspace/index.ts
+@@ -1,4 +1,5 @@
+ import { Router } from 'express'
++import { OpenAI } from 'openai'
+ 
+ import dataSourcesRouter from './data-sources/index.js'
+ import documentsRouter from './documents/index.js'
+@@ -8,7 +9,12 @@ import environmentVariablesRouter from './environment-variables.js'
+ import { IOServer } from '../../../websocket/index.js'
+ import { getParam } from '../../../utils/express.js'
+ import { broadcastDocuments } from '../../../websocket/workspace/documents.js'
+-import { UserWorkspaceRole, updateWorkspace } from '@briefer/database'
++import {
++  UserWorkspaceRole,
++  updateWorkspace,
++  getWorkspaceWithSecrets,
++  decrypt,
++} from '@briefer/database'
+ import filesRouter from './files.js'
+ import componentsRouter from './components.js'
+ import { canUpdateWorkspace, hasWorkspaceRoles } from '../../../auth/token.js'
+@@ -85,6 +91,49 @@ export default function workspaceRouter(socketServer: IOServer) {
+     res.status(200).json(updatedWorkspace)
+   })
+ 
++  // Lazycat: smoke-test the AI endpoint configured for this workspace.
++  // Sends a 1-token chat completion against (assistantApiBaseUrl,
++  // assistantModel, openAiApiKey) and returns ok/false + a short message.
++  router.post('/ai-test', isAdmin, async (req, res) => {
++    const workspaceId = getParam(req, 'workspaceId')
++    try {
++      const ws = await getWorkspaceWithSecrets(workspaceId)
++      if (!ws) {
++        res.status(404).json({ ok: false, message: 'workspace not found' })
++        return
++      }
++      let apiKey: string | null = ws.secrets?.openAiApiKey ?? null
++      if (apiKey) {
++        apiKey = decrypt(apiKey, config().WORKSPACE_SECRETS_ENCRYPTION_KEY)
++      } else {
++        apiKey = config().OPENAI_API_KEY
++      }
++      if (!apiKey) {
++        res
++          .status(400)
++          .json({ ok: false, message: 'no API key configured' })
++        return
++      }
++      const baseURL =
++        ws.assistantApiBaseUrl ||
++        process.env['OPENAI_BASE_URL'] ||
++        process.env['OPENAI_API_BASE'] ||
++        undefined
++      const openai = new OpenAI({ apiKey, baseURL })
++      const r = await openai.chat.completions.create({
++        model: ws.assistantModel || 'gpt-4o',
++        messages: [{ role: 'user', content: 'ping' }],
++        max_tokens: 1,
++      })
++      res
++        .status(200)
++        .json({ ok: true, message: `Got reply (model: ${r.model})` })
++    } catch (err) {
++      const msg = err instanceof Error ? err.message : String(err)
++      res.status(200).json({ ok: false, message: msg })
++    }
++  })
++
+   router.use('/tutorials', tutorialsRouter(socketServer))
+   router.use('/data-sources', dataSourcesRouter(socketServer))
+   router.use('/documents', documentsRouter(socketServer))
+diff --git a/apps/api/src/yjs/v2/executor/ai/python.ts b/apps/api/src/yjs/v2/executor/ai/python.ts
+index 11860f2..ce34cc2 100644
+--- a/apps/api/src/yjs/v2/executor/ai/python.ts
++++ b/apps/api/src/yjs/v2/executor/ai/python.ts
+@@ -39,7 +39,8 @@ async function editWithAI(
+     dataFrames,
+     onSource,
+     workspace?.assistantModel ?? null,
+-    workspace?.secrets?.openAiApiKey ?? null
++    workspace?.secrets?.openAiApiKey ?? null,
++    workspace?.assistantApiBaseUrl ?? null
+   )
+ }
+ 
+diff --git a/apps/api/src/yjs/v2/executor/ai/sql.ts b/apps/api/src/yjs/v2/executor/ai/sql.ts
+index 4a5c60a..2c79e17 100644
+--- a/apps/api/src/yjs/v2/executor/ai/sql.ts
++++ b/apps/api/src/yjs/v2/executor/ai/sql.ts
+@@ -60,7 +60,8 @@ async function editWithAI(
+       // TODO: what should be the schema when duckdb?
+       null,
+       assistantModelId,
+-      workspace?.secrets?.openAiApiKey ?? null
++      workspace?.secrets?.openAiApiKey ?? null,
++      workspace?.assistantApiBaseUrl ?? null
+     )
+   }
+ 
+@@ -89,7 +90,8 @@ async function editWithAI(
+     dataSource,
+     structure,
+     instructions,
+-    openAiApiKey
++    openAiApiKey,
++    workspace?.assistantApiBaseUrl ?? null
+   )
+ 
+   event(assistantModelId)
+@@ -126,7 +128,8 @@ async function editWithAI(
+     onSuggestions,
+     tableInfo,
+     assistantModelId,
+-    workspace?.secrets?.openAiApiKey ?? null
++    workspace?.secrets?.openAiApiKey ?? null,
++    workspace?.assistantApiBaseUrl ?? null
+   )
+ }
+ 
+@@ -134,13 +137,18 @@ async function retrieveTableInfoForQuestion(
+   datasource: DataSource,
+   structure: DataSourceStructureStateV3 | null,
+   question: string,
+-  openAiApiKey: string | null
++  openAiApiKey: string | null,
++  apiBaseUrl: string | null = null
+ ): Promise<string | null> {
+   if (!structure) {
+     return null
+   }
+ 
+-  const questionEmbeddingResult = await createEmbedding(question, openAiApiKey)
++  const questionEmbeddingResult = await createEmbedding(
++    question,
++    openAiApiKey,
++    apiBaseUrl
++  )
+   let tableInfo: string
+   if (questionEmbeddingResult) {
+     const raw = await prisma()
+diff --git a/packages/database/prisma/migrations/20260508120000_add_workspace_assistant_api_base_url/migration.sql b/packages/database/prisma/migrations/20260508120000_add_workspace_assistant_api_base_url/migration.sql
+new file mode 100644
+index 0000000..a82b30b
+--- /dev/null
++++ b/packages/database/prisma/migrations/20260508120000_add_workspace_assistant_api_base_url/migration.sql
+@@ -0,0 +1,2 @@
++-- AlterTable
++ALTER TABLE "Workspace" ADD COLUMN "assistantApiBaseUrl" TEXT;
+diff --git a/packages/database/prisma/schema.prisma b/packages/database/prisma/schema.prisma
+index 0411841..53e6f35 100644
+--- a/packages/database/prisma/schema.prisma
++++ b/packages/database/prisma/schema.prisma
+@@ -494,6 +494,7 @@ model Workspace {
+   ownerId        String   @db.Uuid
+   secretsId      String?  @unique @db.Uuid
+   assistantModel String   @default("gpt-4o")
++  assistantApiBaseUrl String?
+ 
+   createdAt DateTime @default(now())
+   updatedAt DateTime @default(now()) @updatedAt
+diff --git a/packages/database/src/workspaces.ts b/packages/database/src/workspaces.ts
+index feb148a..89363de 100644
+--- a/packages/database/src/workspaces.ts
++++ b/packages/database/src/workspaces.ts
+@@ -47,6 +47,7 @@ export async function getWorkspaceWithSecrets(workspaceId: string) {
+     },
+     select: {
+       assistantModel: true,
++      assistantApiBaseUrl: true,
+       secrets: {
+         select: {
+           openAiApiKey: true,
+@@ -85,6 +86,14 @@ export async function updateWorkspace(
+     data: {
+       name: data.name,
+       assistantModel: data.assistantModel,
++      // Empty string clears the override; undefined leaves the field
++      // alone so callers patching unrelated fields don't wipe it.
++      assistantApiBaseUrl:
++        data.assistantApiBaseUrl === undefined
++          ? undefined
++          : data.assistantApiBaseUrl === ''
++            ? null
++            : data.assistantApiBaseUrl,
+       secrets: {
+         upsert: {
+           update: {
+diff --git a/packages/types/src/index.ts b/packages/types/src/index.ts
+index aa96125..4766a0d 100644
+--- a/packages/types/src/index.ts
++++ b/packages/types/src/index.ts
+@@ -1195,12 +1195,14 @@ export type PivotTableSort =
+ const workspaceEditBase = z.object({
+   name: z.string().optional(),
+   assistantModel: z.string().optional(),
++  assistantApiBaseUrl: z.string().nullable().optional(),
+   openAiApiKey: z.string().optional(),
+ })
+ 
+ export const WorkspaceEditFormValues = z.union([
+   workspaceEditBase.extend({ name: z.string() }),
+   workspaceEditBase.extend({ assistantModel: z.string() }),
++  workspaceEditBase.extend({ assistantApiBaseUrl: z.string().nullable() }),
+   workspaceEditBase.extend({ openAiApiKey: z.string() }),
+ ])
+ 

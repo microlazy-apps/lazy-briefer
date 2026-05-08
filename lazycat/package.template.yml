@@ -57,8 +57,11 @@ locales:
 
       ## 资源占用
 
-      镜像约 2.5GB（内置 Postgres + pgvector + Jupyter + Node + Python +
-      Oracle Instant Client 等），首次拉取较慢。运行内存 ≥ 2GB 推荐。
+      已拆分为 6 个独立服务：postgres / jupyter / ai / api / web / nginx。
+      首次安装时各镜像并行拉取，单个镜像在 200MB ~ 1.2GB 之间。运行
+      内存 ≥ 2GB 推荐。
+
+      升级时只有改动过的服务镜像会重新拉取，其它从本地缓存复用。
   en:
     name: Briefer Data Notebooks
     description: Self-hosted Briefer — Notion-style data notebooks + dashboards, AI assistant supports any OpenAI-compatible provider
@@ -111,6 +114,9 @@ locales:
 
       ## Resource footprint
 
-      The image is ~2.5GB (bundles Postgres + pgvector + Jupyter +
-      Node + Python + Oracle Instant Client). First pull takes a
-      while. ≥ 2GB RAM recommended.
+      Split into 6 services: postgres / jupyter / ai / api / web /
+      nginx. Pulls happen in parallel on first install; individual
+      image sizes range from ~200MB to ~1.2GB. ≥ 2GB RAM recommended.
+
+      On upgrade only the changed service images re-pull; everything
+      else is reused from the local cache.

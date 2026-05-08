@@ -8,64 +8,181 @@ application:
   health_check:
     test_url: http://main:3000/
     timeout: 10s
-    # First boot does initdb + ~50 prisma migrations + Jupyter venv +
-    # AI venv warm-up. 10 min start_period prevents lazycat from
-    # erroring out and killing the container mid-init.
-    start_period: 600s
+    # First boot does pg-seed copy (~10-20s on slow disks), prisma
+    # migrate deploy (idempotent, fast), AI venv warm-up. Keep a
+    # generous start_period so lazycat doesn't kill the stack mid
+    # boot — most reboots after that are < 30s.
+    start_period: 300s
 
 services:
-  main:
-    image: ${LAZYCAT_IMAGE}
+  # ---------------- postgres-seed ---------------------------------
+  # pgvector/pgvector:pg15 with /opt/briefer/pg-seed pre-populated by
+  # build-time `initdb + init_db.sh + prisma migrate deploy`. The
+  # entrypoint copies the seed onto the bind mount on first boot so
+  # the api can connect right away — saves users 30-60s of migrate
+  # wait on a fresh install.
+  postgres:
+    image: ${LAZYCAT_IMAGE_POSTGRES_SEED}
     environment:
       - TZ=Asia/Shanghai
+      # Upstream pgvector image looks at POSTGRES_USER / POSTGRES_PASSWORD
+      # to bootstrap the cluster. We seed `briefer` ourselves at build
+      # time but still set superuser creds so init_db.sh / psql works
+      # before the bind copy lands.
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD={{stable_secret "BRIEFER_POSTGRES_SUPERUSER_PASSWORD"}}
+      - POSTGRES_DB=briefer
+    binds:
+      - /lzcapp/var/persist/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U briefer -d briefer || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
 
-      # Force UTF-8 everywhere. node:18-slim ships C locale and slim
-      # debian doesn't actually generate C.UTF-8 properly, so plain
-      # locale tweaks fall back to ASCII and any non-ASCII byte
-      # (Chinese, emoji, ...) crashes with "'ascii' codec can't decode
-      # byte ...". PYTHONUTF8=1 forces Python 3.7+ into UTF-8 mode
-      # regardless of locale; the LANG/LC vars + PYTHONIOENCODING are
-      # belt-and-suspenders for native libs and child processes.
+  # ---------------- jupyter ---------------------------------------
+  # briefercloud/briefer-jupyter at the version pinned by our vendor
+  # subtree — built from vendor/briefer/apps/api/jupyter.Dockerfile
+  # (no lazycat patches needed; jupyter only sees JUPYTER_TOKEN).
+  jupyter:
+    image: ${LAZYCAT_IMAGE_JUPYTER}
+    environment:
+      - TZ=Asia/Shanghai
+      - JUPYTER_TOKEN={{stable_secret "BRIEFER_JUPYTER_TOKEN"}}
+    binds:
+      - /lzcapp/var/persist/jupyter:/home/jupyteruser
+    command:
+      - "sh"
+      - "-c"
+      - "jupyter server --ip=0.0.0.0 --ZMQChannelsWebsocketConnection.iopub_data_rate_limit=1.0e10 --ZMQChannelsWebsocketConnection.iopub_msg_rate_limit=1.0e6 --ServerApp.max_body_size=107374182400"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8888/api || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  # ---------------- ai --------------------------------------------
+  # FastAPI service — receives `openaiApiBase` per-request from api
+  # so per-workspace base URL works. AI_BASIC_AUTH_* gates inbound
+  # requests from api; OPENAI_API_KEY is the install-time fallback
+  # for workspaces that haven't set their own.
+  ai:
+    image: ${LAZYCAT_IMAGE_AI}
+    environment:
+      - TZ=Asia/Shanghai
+      - PYTHONUTF8=1
+      - PYTHONIOENCODING=utf-8
+      - LANG=C.UTF-8
+      - LC_ALL=C.UTF-8
+      - PORT=8000
+      - BASIC_AUTH_USERNAME={{stable_secret "BRIEFER_AI_AUTH_USERNAME"}}
+      - BASIC_AUTH_PASSWORD={{stable_secret "BRIEFER_AI_AUTH_PASSWORD"}}
+      # AI provider creds come per-workspace from the api now —
+      # no install-time deploy params, no container env. See
+      # patches/ai/01-base-url.patch (initialize_llm picks up the
+      # openai_api_base argument from the api request body).
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  # ---------------- api -------------------------------------------
+  # Runs prisma migrate deploy on every start (idempotent — only new
+  # migrations run). Encryption keys are 128-hex stable_secrets;
+  # entrypoint truncates to 64 to satisfy node createCipheriv.
+  api:
+    image: ${LAZYCAT_IMAGE_API}
+    environment:
+      - TZ=Asia/Shanghai
+      - NODE_ENV=production
+      - LOG_LEVEL=info
       - PYTHONUTF8=1
       - PYTHONIOENCODING=utf-8
       - LANG=C.UTF-8
       - LC_ALL=C.UTF-8
 
-      # AI assistant (model name + base URL + API key) is configured
-      # per-workspace in briefer's UI — see Settings → AI. We don't
-      # surface OPENAI_* as deploy params or container envs to keep
-      # the install dialog clean.
+      - API_URL=/api
+      - FRONTEND_URL=/
+      - PORT=8080
 
-      # Briefer's setup.py auto-generates these on first boot if missing,
-      # but pinning them via stable_secret keeps them deterministic across
-      # container restarts and survives /home/briefer/.config wipes.
       - LOGIN_JWT_SECRET={{stable_secret "BRIEFER_LOGIN_JWT_SECRET"}}
       - AUTH_JWT_SECRET={{stable_secret "BRIEFER_AUTH_JWT_SECRET"}}
-      - JUPYTER_TOKEN={{stable_secret "BRIEFER_JUPYTER_TOKEN"}}
-      - AI_BASIC_AUTH_USERNAME={{stable_secret "BRIEFER_AI_AUTH_USERNAME"}}
-      - AI_BASIC_AUTH_PASSWORD={{stable_secret "BRIEFER_AI_AUTH_PASSWORD"}}
       - ENVIRONMENT_VARIABLES_ENCRYPTION_KEY={{stable_secret "BRIEFER_ENV_VARS_KEY"}}
       - WORKSPACE_SECRETS_ENCRYPTION_KEY={{stable_secret "BRIEFER_WORKSPACE_KEY"}}
       - DATASOURCES_ENCRYPTION_KEY={{stable_secret "BRIEFER_DATASOURCES_KEY"}}
 
-      # Prisma connection pool. Default (10 / 5s) gets exhausted as soon
-      # as the schema explorer crawls a real data source — every worker
-      # competes with internal lock-extension queries. Bump to a value
-      # that survives ~30 concurrent schema queries.
+      - AI_API_URL=http://ai:8000
+      - AI_API_USERNAME={{stable_secret "BRIEFER_AI_AUTH_USERNAME"}}
+      - AI_API_PASSWORD={{stable_secret "BRIEFER_AI_AUTH_PASSWORD"}}
+
+      - PYTHON_ALLOWED_LIBRARIES=plotly,matplotlib,numpy,pandas
+
+      # Connect to the postgres-seed sibling. `briefer` user/password
+      # are baked at build time by docker/init_db.sh + prisma seed.
+      - POSTGRES_USERNAME=briefer
+      - POSTGRES_PASSWORD=briefer
+      - POSTGRES_HOSTNAME=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DATABASE=briefer
+      - POSTGRES_PRISMA_URL=postgresql://briefer:briefer@postgres:5432/briefer?schema=public&connection_limit=50&pool_timeout=30
+      # Connection pool sizing — schema explorer can saturate the
+      # default 10/5 quickly when crawling a real source.
       - POSTGRES_CONNECTION_LIMIT=50
       - POSTGRES_POOL_TIMEOUT=30
+
+      - JUPYTER_HOST=jupyter
+      - JUPYTER_PORT=8888
+      - JUPYTER_TOKEN={{stable_secret "BRIEFER_JUPYTER_TOKEN"}}
     binds:
-      # postgres data — pgvector tables, app metadata
-      - /lzcapp/var/persist/postgres:/var/lib/postgresql/data
-      # jupyter user home — uploaded files, notebook state
-      - /lzcapp/var/persist/jupyter:/home/jupyteruser
-      # briefer app config (api/web)
       - /lzcapp/var/persist/briefer:/home/briefer/.config/briefer
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:3000/"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/readyz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 120s
+    depends_on:
+      - postgres
+      - jupyter
+      - ai
+
+  # ---------------- web -------------------------------------------
+  # Next.js standalone build.
+  web:
+    image: ${LAZYCAT_IMAGE_WEB}
+    environment:
+      - TZ=Asia/Shanghai
+      - NODE_ENV=production
+      - HOSTNAME=0.0.0.0
+      - PORT=4000
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:4000/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    depends_on:
+      - api
+
+  # ---------------- main (nginx) ----------------------------------
+  # Public ingress on :3000. Reverse-proxies /api → api:8080,
+  # /api/socket.io and /api/v2/yjs WebSocket → api:8080, everything
+  # else → web:4000. nginx.conf is baked into the image at build
+  # time from vendor/briefer/nginx/nginx.conf — no manifest binds.
+  main:
+    image: ${LAZYCAT_IMAGE_MAIN}
+    environment:
+      - TZ=Asia/Shanghai
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/ || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
-      # Match the application-level start_period so docker's own
-      # healthcheck does not flap during the long first boot.
-      start_period: 600s
+      start_period: 90s
+    depends_on:
+      - web
+      - api

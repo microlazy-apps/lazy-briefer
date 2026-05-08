@@ -1,12 +1,17 @@
 name: Bootstrap appstore (manual)
 
+# Build all 6 service images + lpk, then run lazycat-ci's bootstrap.
+# Bootstrap is one-way (locks app id + icon + screenshots) so this
+# workflow is dispatched by hand only — the user verifies the lpk
+# installs cleanly on a real box first.
+
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Semver to embed (e.g. 0.1.0)"
+        description: "Semver to embed (e.g. 0.2.0)"
         required: true
-        default: "0.1.0"
+        default: "0.2.0"
       app_id:
         description: "Existing app_id (skip /app/create on retry)"
         required: false
@@ -18,11 +23,9 @@ permissions:
 
 jobs:
   build:
-    uses: microlazy-apps/lazycat-ci/.github/workflows/lpk-build.yml@v0.1.0
+    uses: ./.github/workflows/lpk-multi-build.yml
     with:
-      version:        ${{ inputs.version }}
-      docker-context: ./vendor/briefer
-      patches-target: vendor/briefer
+      version: ${{ inputs.version }}
     secrets: inherit
 
   bootstrap:
