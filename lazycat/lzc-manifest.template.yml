@@ -52,10 +52,9 @@ services:
       - JUPYTER_TOKEN={{stable_secret "BRIEFER_JUPYTER_TOKEN"}}
     binds:
       - /lzcapp/var/persist/jupyter:/home/jupyteruser
-    command:
-      - "sh"
-      - "-c"
-      - "jupyter server --ip=0.0.0.0 --ZMQChannelsWebsocketConnection.iopub_data_rate_limit=1.0e10 --ZMQChannelsWebsocketConnection.iopub_msg_rate_limit=1.0e6 --ServerApp.max_body_size=107374182400"
+    # lazycat lpk-manager rejects YAML list form for `command:` — must
+    # be a single string. The shell parses it back into argv at runtime.
+    command: "sh -c 'jupyter server --ip=0.0.0.0 --ZMQChannelsWebsocketConnection.iopub_data_rate_limit=1.0e10 --ZMQChannelsWebsocketConnection.iopub_msg_rate_limit=1.0e6 --ServerApp.max_body_size=107374182400'"
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8888/api || exit 1"]
       interval: 10s
