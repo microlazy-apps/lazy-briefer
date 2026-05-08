@@ -23,11 +23,16 @@ set -euo pipefail
 
 # --- force IPv4 for `localhost` ---
 # Briefer's api process talks to jupyter via http://localhost:8888.
-# Node 18+ axios resolves `localhost` to ::1 first, but jupyter only
-# binds IPv4 0.0.0.0 → ECONNREFUSED ::1:8888 on every CSV upload /
-# file listing. Strip `localhost` from the IPv6 line so DNS only
-# returns 127.0.0.1.
-sed -i -E '/^::1[[:space:]]/{s/[[:space:]]+localhost([[:space:]]|$)/\1/g}' /etc/hosts || true
+# Node 18+ resolves `localhost` to ::1 first, but jupyter only binds
+# IPv4 0.0.0.0 → ECONNREFUSED ::1:8888 on every CSV upload / file
+# listing. Strip `localhost` from the IPv6 line so DNS returns only
+# 127.0.0.1.
+#
+# Note: docker mounts /etc/hosts as a bind, so `sed -i` (which uses
+# rename(2)) fails with EXDEV. Read into a shell variable, then
+# truncate-and-write the file in place.
+HOSTS_NEW=$(sed -E '/^::1[[:space:]]/{s/[[:space:]]+localhost([[:space:]]|$)/\1/g}' /etc/hosts)
+printf '%s\n' "$HOSTS_NEW" > /etc/hosts
 
 # --- bind ownership fixups (top-level only, fast) ---
 mkdir -p /var/lib/postgresql/data
