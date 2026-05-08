@@ -1,4 +1,3 @@
 pkgout: ./
 icon: ./icon.png
 manifest: ./lzc-manifest.yml
-deploy-params: ./lzc-deploy-params.yml
