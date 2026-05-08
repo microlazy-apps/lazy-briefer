@@ -385,7 +385,7 @@ index 39bc543..a41a847 100644
          logger().error(
            {
 diff --git a/apps/api/src/embedding.ts b/apps/api/src/embedding.ts
-index ae625d8..d2fdd40 100644
+index ae625d8..a223e24 100644
 --- a/apps/api/src/embedding.ts
 +++ b/apps/api/src/embedding.ts
 @@ -18,11 +18,19 @@ const BEDROCK_EMBEDDING_MODELS = [
@@ -410,17 +410,51 @@ index ae625d8..d2fdd40 100644
  ): Promise<{ embedding: number[]; model: string } | null> {
    const inputChecksum = createHash('sha256').update(input).digest('hex')
    for (const model of MODELS) {
-@@ -52,7 +60,8 @@ export async function createEmbedding(
-     const result = await createEmbeddingFromOpenAI(
-       input,
-       inputChecksum,
--      openAiApiKey
-+      openAiApiKey,
-+      apiBaseUrl ?? null
-     )
-     return result
+@@ -49,36 +57,69 @@ export async function createEmbedding(
    }
-@@ -64,21 +73,33 @@ export async function createEmbedding(
+ 
+   if (openAiApiKey) {
+-    const result = await createEmbeddingFromOpenAI(
+-      input,
+-      inputChecksum,
+-      openAiApiKey
+-    )
+-    return result
++    try {
++      const result = await createEmbeddingFromOpenAI(
++        input,
++        inputChecksum,
++        openAiApiKey,
++        apiBaseUrl ?? null
++      )
++      return result
++    } catch (err) {
++      // Many OpenAI-compatible providers (DeepSeek, Qwen-DashScope, ...)
++      // don't expose /v1/embeddings, so 404 / network errors are common
++      // when the workspace is pointed at one. Log and let the caller
++      // fall back (full-schema tableInfo, no embedding cache write).
++      logger().warn(
++        { err },
++        'OpenAI-compatible embedding endpoint failed; returning null'
++      )
++      return null
++    }
+   }
+ 
+-  const embedding = await createEmbeddingFromBedrock(input, inputChecksum)
+-  return embedding
++  try {
++    const embedding = await createEmbeddingFromBedrock(input, inputChecksum)
++    return embedding
++  } catch (err) {
++    logger().warn(
++      { err },
++      'Bedrock embedding fallback also failed; returning null'
++    )
++    return null
++  }
+ }
+ 
  async function createEmbeddingFromOpenAI(
    input: string,
    inputChecksum: string,
