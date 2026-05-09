@@ -201,6 +201,18 @@ index f7ba024..8ebad73 100755
 +# parses the HTML error page as JS — "Unexpected token '<'".
 +cd $SCRIPT_DIR
 +HOSTNAME=0.0.0.0 PORT=4000 node server.js
+diff --git a/packages/database/prisma/schema.prisma b/packages/database/prisma/schema.prisma
+index 0411841..53e6f35 100644
+--- a/packages/database/prisma/schema.prisma
++++ b/packages/database/prisma/schema.prisma
+@@ -494,6 +494,7 @@ model Workspace {
+   ownerId        String   @db.Uuid
+   secretsId      String?  @unique @db.Uuid
+   assistantModel String   @default("gpt-4o")
++  assistantApiBaseUrl String?
+ 
+   createdAt DateTime @default(now())
+   updatedAt DateTime @default(now()) @updatedAt
 diff --git a/packages/types/src/index.ts b/packages/types/src/index.ts
 index aa96125..4766a0d 100644
 --- a/packages/types/src/index.ts
