@@ -851,10 +851,10 @@ index 284fe65..d5630c9 100644
        </div>
 diff --git a/docker/lazycat-entrypoint.sh b/docker/lazycat-entrypoint.sh
 new file mode 100755
-index 0000000..6168ff2
+index 0000000..6d657d0
 --- /dev/null
 +++ b/docker/lazycat-entrypoint.sh
-@@ -0,0 +1,86 @@
+@@ -0,0 +1,105 @@
 +#!/bin/bash
 +# Lazycat entrypoint shim for briefer.
 +#
@@ -904,13 +904,32 @@ index 0000000..6168ff2
 +HOSTS_NEW=$(sed -E '/^::1[[:space:]]/{s/[[:space:]]+localhost([[:space:]]|$)/\1/g}' /etc/hosts)
 +printf '%s\n' "$HOSTS_NEW" > /etc/hosts
 +
-+# --- bind ownership fixups (top-level only, fast) ---
++# --- bind ownership fixups ---
++# Top-level chown is fast and handles the common case (lazycat binds
++# host paths in root-owned). Recursive chown only kicks in when the
++# data dir holds files owned by a *different* uid (e.g. leftovers
++# from a prior multi-service install where the postgres container
++# ran as a different uid). Without the recursive fixup, postgres
++# can't read its own data files and supervisord BACKOFFs forever.
++chown_if_alien() {
++  local dir="$1" expect_user="$2"
++  [ -d "$dir" ] || return 0
++  local sample
++  sample=$(find "$dir" -mindepth 1 -maxdepth 2 -not -user "$expect_user" -print -quit 2>/dev/null)
++  if [ -n "$sample" ]; then
++    echo "[lazycat-entrypoint] $dir contains files not owned by $expect_user — running chown -R"
++    chown -R "$expect_user:$expect_user" "$dir"
++  fi
++}
++
 +mkdir -p /var/lib/postgresql/data
 +chown postgres:postgres /var/lib/postgresql/data
 +chmod 700 /var/lib/postgresql/data
++chown_if_alien /var/lib/postgresql/data postgres
 +
 +mkdir -p /home/jupyteruser
 +chown jupyteruser:jupyteruser /home/jupyteruser
++chown_if_alien /home/jupyteruser jupyteruser
 +
 +mkdir -p /home/briefer/.config/briefer
 +chown -R briefer:briefer /home/briefer/.config
