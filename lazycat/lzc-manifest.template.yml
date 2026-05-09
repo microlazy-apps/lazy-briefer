@@ -162,6 +162,12 @@ services:
       - NODE_ENV=production
       - HOSTNAME=0.0.0.0
       - PORT=4000
+      # Browser-side env injected via /env.js by start.sh. The frontend
+      # talks to the api through the public ingress, so /api hits nginx
+      # which proxies to the api service.
+      - NEXT_PUBLIC_API_URL=/api
+      - NEXT_PUBLIC_API_WS_URL=/api
+      - NEXT_PUBLIC_PUBLIC_URL=/
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:4000/ || exit 1"]
       interval: 10s
