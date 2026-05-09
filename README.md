@@ -45,32 +45,19 @@ data connections all work without it.
 
 ## Architecture
 
-Vendored upstream + per-service Dockerfiles + per-service patches.
+Vendored upstream + a single patch.
 
 - `vendor/briefer/` — git subtree pinned to `briefercloud/briefer` at
   the upstream version tag (currently `v0.0.112`).
-- `docker/<svc>/Dockerfile` — one per service we build ourselves
-  (`postgres-seed`, `ai`, `api`, `web`, `main` (nginx)).
-  `jupyter` uses upstream `apps/api/jupyter.Dockerfile` unmodified.
-- `patches/<svc>/*.patch` — applied to the vendor tree before the
-  matching service's docker build. Carries the per-workspace AI
-  Base URL UI, the embedding-fallback patch, the prisma migration,
-  and the `assistantApiBaseUrl` schema/types changes.
+- `patches/01-lazycat-base-url-and-shim.patch` — applied at CI build
+  time. Adds the per-workspace AI Base URL field, an entrypoint shim
+  for chowns / IPv6 / encryption-key length / pg-seed copy, and
+  build-time pg-seed snapshots.
 
-The lpk lazycat-manifest declares **6 sibling services** sharing the
-default lazycat bridge network:
-
-| service | image source | role |
-|---|---|---|
-| `postgres` | `docker/postgres-seed/` | pgvector + a build-time prisma seed copied onto the bind on first boot |
-| `jupyter` | `vendor/briefer/apps/api/jupyter.Dockerfile` | unpatched upstream notebook executor |
-| `ai` | `docker/ai/` | FastAPI bridge for OpenAI-compatible providers |
-| `api` | `docker/api/` | Node API; runs `prisma migrate deploy` on every start |
-| `web` | `docker/web/` | Next.js standalone build |
-| `main` | `docker/main/` | nginx reverse-proxy on `:3000` (the public ingress) |
-
-Lazycat pulls all 6 in parallel on first install; on upgrade only the
-images whose source changed re-pull, the rest reuse the local cache.
+The image still ships the upstream architecture: Postgres 15 +
+pgvector, Jupyter Server, AI service (FastAPI), API (Node), Web
+(Next.js), nginx — all started by supervisord, behind nginx on port
+3000.
 
 ## Persistent storage
 
@@ -85,29 +72,20 @@ across reinstalls).
 
 ## Build / release flow
 
-- Push a `v*` tag → `release.yml` calls the local `lpk-multi-build.yml`
-  reusable workflow which:
-  1. matrix-builds 6 service images and pushes each to
-     `ghcr.io/<repo>/<svc>:<version>`
-  2. on a self-hosted lazycat runner, copies each image to
-     `registry.lazycat.cloud` and renders the manifest with
-     `LAZYCAT_IMAGE_<SVC>` env vars
-  3. runs `lzc-cli project build` and uploads the .lpk artifact
-- `publish-appstore` succeeds once the app is bootstrapped.
+Standard `microlazy-apps` lazycat-ci pattern:
+
+- Push a `v*` tag → `release.yml` builds + pushes ghcr image + ships
+  lpk to the GitHub Release. `publish-appstore` succeeds once the app
+  is bootstrapped.
 - First time only: trigger `bootstrap-app.yml` via Actions tab to
-  register the app at lazycat developer center (also runs the matrix
-  build).
+  register the app at lazycat developer center.
 
 ## Bumping upstream
 
 ```sh
 git subtree pull --prefix=vendor/briefer \
   https://github.com/briefercloud/briefer.git vX.Y.Z --squash
-for d in patches/api patches/web patches/ai; do
-  for p in "$d"/*.patch; do
-    git apply --check "$p" -p1 --directory=vendor/briefer
-  done
-done
+git apply --check patches/*.patch -p1 --directory=vendor/briefer
 ```
 
 If a patched file moved or its surrounding context changed, regenerate
